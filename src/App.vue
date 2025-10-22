@@ -144,7 +144,7 @@
         <div v-if="aftershockFibLevels.length" class="aftershock-fib">
           <h3>Fibonacci retracement levels</h3>
           <ul>
-            <li v-for="level in aftershockFibLevels" :key="level.level" class="fib-level">
+            <li v-for="level in aftershockFibLevels" :key="level.key" class="fib-level">
               <span class="fib-label">Fib {{ level.levelLabel }}</span>
               <span class="fib-price">{{ level.formattedPrice ?? '—' }}</span>
               <span :class="['fib-status', `fib-status--${level.statusClass}`]">{{ level.statusText }}</span>
@@ -427,11 +427,22 @@ const aftershockFibLevels = computed(() => {
     return [];
   }
 
-  return levels.map((entry) => {
+  const sorted = [...levels].sort((a, b) => {
+    const aLevel = typeof a.level === 'number' ? a.level : Number(a.level);
+    const bLevel = typeof b.level === 'number' ? b.level : Number(b.level);
+    if (!Number.isFinite(aLevel) || !Number.isFinite(bLevel)) {
+      return 0;
+    }
+    return bLevel - aLevel;
+  });
+
+  return sorted.map((entry) => {
     const formattedPrice = formatCurrency(entry.price);
     const normalizedLevel = typeof entry.level === 'number' ? entry.level : Number(entry.level);
     const levelLabel = Number.isFinite(normalizedLevel)
-      ? normalizedLevel.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
+      ? normalizedLevel.toFixed(normalizedLevel === 0 || normalizedLevel === 1 ? 0 : 3)
+          .replace(/0+$/, '')
+          .replace(/\.$/, '')
       : entry.level;
 
     let statusText = 'Unknown';
@@ -445,6 +456,7 @@ const aftershockFibLevels = computed(() => {
     }
 
     return {
+      key: `${entry.level}`,
       level: entry.level,
       levelLabel,
       formattedPrice,

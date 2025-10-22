@@ -95,15 +95,29 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
 
   // === Fibonacci Levels ===
   const fib = {};
+  const delta = swingHigh - swingLow;
   fibLevels.forEach((level) => {
-    fib[level] = swingHigh - (swingHigh - swingLow) * level;
+    fib[level] = swingLow + delta * level;
   });
+  fib[0] = swingLow;
+  fib[1] = swingHigh;
   fib['0'] = swingLow;
   fib['1'] = swingHigh;
 
-  const fibLevelDetails = fibLevels.map((level) => {
+  const fibLevelOrder = [0, ...[...fibLevels].sort((a, b) => a - b), 1];
+  const fibLevelDetails = fibLevelOrder.map((level) => {
     const fibPrice = fib[level];
-    const isValid = Number.isFinite(price) && Number.isFinite(fibPrice) ? price >= fibPrice : null;
+    let isValid = null;
+    if (Number.isFinite(price) && Number.isFinite(fibPrice)) {
+      const numericLevel = typeof level === 'number' ? level : Number(level);
+      if (Number.isFinite(numericLevel)) {
+        if (numericLevel <= 0.5) {
+          isValid = price >= fibPrice;
+        } else {
+          isValid = price <= fibPrice;
+        }
+      }
+    }
     return { level, price: fibPrice, isValid };
   });
 
@@ -113,7 +127,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
     setupScore += 15;
     reasons.push({
       tag: 'CORRECTION_DEPTH_OK',
-      detail: `Price ${price?.toFixed ? price.toFixed(6) : price} in ${entryZone} (${fib[0.618].toFixed(6)}–${fib[0.236].toFixed(6)})`,
+      detail: `Price ${price?.toFixed ? price.toFixed(6) : price} in ${entryZone} (${Math.min(fib[0.236], fib[0.618]).toFixed(6)}–${Math.max(fib[0.236], fib[0.618]).toFixed(6)})`,
     });
   } else {
     reasons.push({ tag: 'PRICE_OUTSIDE_ZONE', detail: `Price ${price} not between 0.618–0.236 retracement` });
@@ -219,9 +233,14 @@ function detectImpulse(ohlcv) {
 
 function getEntryZone(price, fib) {
   if (!Number.isFinite(price)) return 'none';
-  if (price <= fib[0.382] && price >= fib[0.5]) return 'mid-range';
-  if (price <= fib[0.236] && price >= fib[0.382]) return 'upper zone';
-  if (price <= fib[0.618] && price >= fib[0.702]) return 'deep retrace';
+  const fib382 = fib[0.382];
+  const fib5 = fib[0.5];
+  const fib236 = fib[0.236];
+  const fib618 = fib[0.618];
+  const fib702 = fib[0.702];
+  if (price >= Math.min(fib382, fib5) && price <= Math.max(fib382, fib5)) return 'mid-range';
+  if (price >= Math.min(fib236, fib382) && price <= Math.max(fib236, fib382)) return 'upper zone';
+  if (price >= Math.min(fib618, fib702) && price <= Math.max(fib618, fib702)) return 'deep retrace';
   return 'none';
 }
 

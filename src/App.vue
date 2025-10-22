@@ -33,7 +33,7 @@
       <p v-else class="placeholder">Submit a token address to fetch its pair address.</p>
     </section>
 
-    <section v-if="pairAddress" class="ohlcv">
+    <section class="ohlcv">
       <h2>OHLCV data</h2>
 
       <div class="controls">
@@ -70,7 +70,8 @@
           </div>
 
           <div class="card-content">
-            <p v-if="config.loading" class="placeholder">Loading…</p>
+            <p v-if="!pairAddress" class="placeholder">Fetch a pair address to load OHLCV data.</p>
+            <p v-else-if="config.loading" class="placeholder">Loading…</p>
             <p v-else-if="config.error" class="error">{{ config.error }}</p>
             <pre v-else-if="config.data">{{ JSON.stringify(config.data, null, 2) }}</pre>
             <p v-else class="placeholder">Adjust the settings to load data.</p>
@@ -286,7 +287,7 @@ async function fetchPairAddress() {
 .container {
   margin: 0 auto;
   padding: 3rem 1.5rem;
-  max-width: 640px;
+  max-width: 1120px;
   display: flex;
   flex-direction: column;
   gap: 2rem;
@@ -415,8 +416,8 @@ select:focus {
 
 .timeframes {
   display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .timeframe-card {
@@ -456,5 +457,14 @@ select:focus {
 
 .card-content .placeholder {
   color: #94a3b8;
+}
+
+@media (min-width: 900px) {
+  .timeframe-header {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+  }
 }
 </style>

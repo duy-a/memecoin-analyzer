@@ -33,6 +33,39 @@
       <p v-else class="placeholder">Submit a token address to fetch its pair address.</p>
     </section>
 
+    <section class="token-overview" aria-live="polite">
+      <h2>Token overview</h2>
+
+      <p v-if="tokenOverviewError" class="error">{{ tokenOverviewError }}</p>
+      <p v-else-if="tokenOverviewLoading" class="placeholder">Loading token information…</p>
+
+      <div v-else-if="tokenOverviewRequested" class="token-overview-content">
+        <dl class="token-overview-grid">
+          <div class="token-overview-item">
+            <dt>Current price</dt>
+            <dd>{{ formattedTokenOverview.price ?? '—' }}</dd>
+          </div>
+          <div class="token-overview-item">
+            <dt>24h volume</dt>
+            <dd>{{ formattedTokenOverview.volume24h ?? '—' }}</dd>
+          </div>
+          <div class="token-overview-item">
+            <dt>24h price change</dt>
+            <dd>{{ formattedTokenOverview.priceChange24h ?? '—' }}</dd>
+          </div>
+          <div class="token-overview-item">
+            <dt>Total holders</dt>
+            <dd>{{ formattedTokenOverview.holders ?? '—' }}</dd>
+          </div>
+        </dl>
+        <p v-if="!hasTokenOverviewData" class="placeholder muted">
+          No overview data is available for this token yet.
+        </p>
+      </div>
+
+      <p v-else class="placeholder">Submit a token address to view token details.</p>
+    </section>
+
     <section class="ohlcv">
       <h2>OHLCV data</h2>
 
@@ -92,6 +125,211 @@ const loading = ref(false);
 
 const apiKey = import.meta.env.VITE_MORALIS_API_KEY;
 const hasApiKey = computed(() => Boolean(apiKey));
+
+function createEmptyTokenOverview() {
+  return {
+    price: null,
+    volume24h: null,
+    priceChange24h: null,
+    holders: null,
+  };
+}
+
+const tokenOverview = ref(createEmptyTokenOverview());
+const tokenOverviewRequested = ref(false);
+const tokenOverviewLoading = ref(false);
+const tokenOverviewError = ref('');
+
+const hasTokenOverviewData = computed(() =>
+  Object.values(tokenOverview.value).some(
+    (value) => value !== null && value !== undefined,
+  ),
+);
+
+function normalizeNumber(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'string') {
+    const sanitized = value.replace(/[,%$\s]/g, '');
+    if (!sanitized) {
+      return null;
+    }
+
+    const parsed = Number(sanitized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function formatCurrency(value) {
+  const normalized = normalizeNumber(value);
+
+  if (normalized === null) {
+    return null;
+  }
+
+  const maximumFractionDigits = Math.abs(normalized) < 1 ? 6 : 2;
+
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits,
+  }).format(normalized);
+}
+
+function formatNumber(value) {
+  const normalized = normalizeNumber(value);
+
+  if (normalized === null) {
+    return null;
+  }
+
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 0,
+  }).format(normalized);
+}
+
+function formatPercentage(value) {
+  const normalized = normalizeNumber(value);
+
+  if (normalized === null) {
+    return null;
+  }
+
+  const formatted = normalized.toFixed(2);
+  const sign = normalized > 0 ? '+' : '';
+
+  return `${sign}${formatted}%`;
+}
+
+const formattedTokenOverview = computed(() => ({
+  price: formatCurrency(tokenOverview.value.price),
+  volume24h: formatCurrency(tokenOverview.value.volume24h),
+  priceChange24h: formatPercentage(tokenOverview.value.priceChange24h),
+  holders: formatNumber(tokenOverview.value.holders),
+}));
+
+async function fetchDexscreenerOverview(address) {
+  const url = `https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(address)}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`DexScreener request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+  const rootEntry = Array.isArray(data) ? data[0] : data;
+  const pairInfo =
+    rootEntry?.pairs?.[0] ?? rootEntry?.pair ?? rootEntry?.data ?? rootEntry?.token ?? rootEntry;
+
+  if (!pairInfo || typeof pairInfo !== 'object') {
+    return {
+      priceUsd: null,
+      volume24h: null,
+      priceChange24h: null,
+    };
+  }
+
+  return {
+    priceUsd: normalizeNumber(
+      pairInfo.priceUsd ?? pairInfo.priceUSD ?? pairInfo.price?.usd ?? pairInfo.price,
+    ),
+    volume24h: normalizeNumber(
+      pairInfo.volume?.h24 ?? pairInfo.volume24h ?? pairInfo['24hVolume'] ?? pairInfo.volume,
+    ),
+    priceChange24h: normalizeNumber(
+      pairInfo.priceChange?.h24 ??
+        pairInfo.priceChange24h ??
+        pairInfo.priceChange24Hour ??
+        pairInfo.priceChange,
+    ),
+  };
+}
+
+async function fetchTokenHoldersCount(address) {
+  const url = `https://solana-gateway.moralis.io/token/mainnet/holders/${encodeURIComponent(
+    address,
+  )}`;
+
+  const response = await fetch(url, {
+    headers: {
+      'X-API-Key': apiKey,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Token holder request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+  const candidates = [
+    data?.total,
+    data?.totalHolders,
+    data?.result?.total,
+    data?.result?.totalHolders,
+    data?.holders?.total,
+    data?.pagination?.total,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeNumber(candidate);
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+async function loadAdditionalTokenOverview(address) {
+  const errors = [];
+
+  const [dexResult, holdersResult] = await Promise.allSettled([
+    fetchDexscreenerOverview(address),
+    fetchTokenHoldersCount(address),
+  ]);
+
+  if (dexResult.status === 'fulfilled') {
+    const { priceUsd, volume24h, priceChange24h } = dexResult.value;
+
+    if (tokenOverview.value.price === null && priceUsd !== null) {
+      tokenOverview.value.price = priceUsd;
+    }
+
+    if (volume24h !== null) {
+      tokenOverview.value.volume24h = volume24h;
+    }
+
+    if (priceChange24h !== null) {
+      tokenOverview.value.priceChange24h = priceChange24h;
+    }
+  } else {
+    const message =
+      dexResult.reason instanceof Error
+        ? `Unable to fetch price and volume data: ${dexResult.reason.message}`
+        : 'Unable to fetch price and volume data.';
+    errors.push(message);
+  }
+
+  if (holdersResult.status === 'fulfilled') {
+    if (holdersResult.value !== null) {
+      tokenOverview.value.holders = holdersResult.value;
+    }
+  } else {
+    const message =
+      holdersResult.reason instanceof Error
+        ? `Unable to fetch holder data: ${holdersResult.reason.message}`
+        : 'Unable to fetch holder data.';
+    errors.push(message);
+  }
+
+  if (errors.length) {
+    tokenOverviewError.value = errors.join(' ');
+  }
+}
 
 const timeframeOptions = [
   '1s',
@@ -240,11 +478,19 @@ watch(
 async function fetchPairAddress() {
   if (!hasApiKey.value) {
     errorMessage.value = 'Moralis API key is not configured.';
+    tokenOverviewRequested.value = false;
+    tokenOverview.value = createEmptyTokenOverview();
+    tokenOverviewError.value = '';
+    tokenOverviewLoading.value = false;
     return;
   }
 
   if (!tokenAddress.value) {
     errorMessage.value = 'Please enter a token address.';
+    tokenOverviewRequested.value = false;
+    tokenOverview.value = createEmptyTokenOverview();
+    tokenOverviewError.value = '';
+    tokenOverviewLoading.value = false;
     return;
   }
 
@@ -252,6 +498,11 @@ async function fetchPairAddress() {
   errorMessage.value = '';
   pairAddress.value = '';
   resetOhlcvState();
+
+  tokenOverviewRequested.value = true;
+  tokenOverviewLoading.value = true;
+  tokenOverviewError.value = '';
+  tokenOverview.value = createEmptyTokenOverview();
 
   try {
     const response = await fetch(
@@ -269,16 +520,29 @@ async function fetchPairAddress() {
 
     const data = await response.json();
 
+    const moralisPrice = normalizeNumber(
+      data.usdPrice ?? data.priceUsd ?? data.usdValue ?? data.priceUSD ?? data.price,
+    );
+
+    if (moralisPrice !== null) {
+      tokenOverview.value.price = moralisPrice;
+    }
+
     if (!data.pairAddress) {
       throw new Error('Pair address not found in response.');
     }
 
     pairAddress.value = data.pairAddress;
+    await loadAdditionalTokenOverview(tokenAddress.value);
     fetchAllOhlcvData();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unable to fetch pair address.';
+    if (!tokenOverviewError.value) {
+      tokenOverviewError.value = errorMessage.value;
+    }
   } finally {
     loading.value = false;
+    tokenOverviewLoading.value = false;
   }
 }
 </script>
@@ -352,6 +616,64 @@ button:not(:disabled):hover {
   border-radius: 1rem;
   padding: 1.5rem;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+.token-overview {
+  background: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.token-overview h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.token-overview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.token-overview-grid {
+  margin: 0;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.token-overview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+}
+
+.token-overview-item dt {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.token-overview-item dd {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.token-overview .muted {
+  color: #94a3b8;
 }
 
 .placeholder {

@@ -61,10 +61,6 @@
             <dt>DEX liquidity</dt>
             <dd>{{ formattedTokenOverview.liquidityUsd ?? '—' }}</dd>
           </div>
-          <div class="token-overview-item">
-            <dt>Largest holder share</dt>
-            <dd>{{ formattedTokenOverview.creatorOwnership ?? '—' }}</dd>
-          </div>
         </dl>
         <p v-if="!hasTokenOverviewData" class="placeholder muted">
           No overview data is available for this token yet.
@@ -858,20 +854,12 @@ function formatPrice(value) {
 
 const aftershockAnalysis = computed(() => {
   const overview = tokenOverview.value;
-  const hasPair = Boolean(pairAddress.value);
   const { short, medium, long } = timeframeSeries.value;
-
-  if (!hasPair || (!short.length && !medium.length && !long.length)) {
-    return {
-      ready: false,
-      checks: [],
-      fib: null,
-      capitalPlan: [],
-      insights: [],
-      timeframes: [],
-      currentPriceLabel: null,
-    };
-  }
+  const timeframeLabels = timeframeConfigs.value.map((config) => config.timeframe);
+  const hasRequested = tokenOverviewRequested.value;
+  const hasPair = Boolean(pairAddress.value);
+  const hasSeriesData = Boolean(short.length || medium.length || long.length);
+  const ready = Boolean(hasRequested || hasPair || hasSeriesData);
 
   const checks = [];
 
@@ -918,7 +906,17 @@ const aftershockAnalysis = computed(() => {
     formattedTokenOverview.value.creatorOwnership ?? '—',
   );
 
-  const impulse = computePriceImpulse(long.length ? long : medium);
+  const selectSeries = (...seriesCandidates) => {
+    for (const series of seriesCandidates) {
+      if (Array.isArray(series) && series.length) {
+        return series;
+      }
+    }
+    return [];
+  };
+
+  const impulseSeries = selectSeries(long, medium, short);
+  const impulse = impulseSeries.length ? computePriceImpulse(impulseSeries) : null;
   const priceChange = overview.priceChange24h;
   const impulseStatus = (() => {
     if (priceChange === null && !impulse) {
@@ -944,7 +942,10 @@ const aftershockAnalysis = computed(() => {
       : undefined,
   );
 
-  const volumeTrendInfo = computeVolumeTrend(short.length ? short : medium);
+  const volumeTrendSeries = selectSeries(short, medium, long);
+  const volumeTrendInfo = volumeTrendSeries.length
+    ? computeVolumeTrend(volumeTrendSeries)
+    : null;
   const volumeTrendStatus = volumeTrendInfo ? (volumeTrendInfo.trendUp ? 'pass' : 'fail') : 'review';
   addCheck(
     'volumeTrend',
@@ -953,7 +954,8 @@ const aftershockAnalysis = computed(() => {
     volumeTrendInfo ? `${(volumeTrendInfo.ratio * 100 - 100).toFixed(1)}% vs prior` : '—',
   );
 
-  const fib = computeFibLevels(short.length ? short : medium);
+  const fibSeries = selectSeries(short, medium, long);
+  const fib = fibSeries.length ? computeFibLevels(fibSeries) : null;
   let correctionStatus = 'review';
   let correctionMessage;
 
@@ -1047,10 +1049,12 @@ const aftershockAnalysis = computed(() => {
     insights.push('A whale/creator controls more than 10% of supply — high rug risk.');
   }
 
-  const timeframeLabels = timeframeConfigs.value.map((config) => config.timeframe);
+  if (!hasSeriesData) {
+    insights.push('Load OHLC candles to confirm impulse structure across preferred timeframes.');
+  }
 
   return {
-    ready: true,
+    ready,
     checks,
     fib: fib
       ? {

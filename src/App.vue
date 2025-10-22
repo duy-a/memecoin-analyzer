@@ -57,6 +57,14 @@
             <dt>Total holders</dt>
             <dd>{{ formattedTokenOverview.holders ?? '—' }}</dd>
           </div>
+          <div class="token-overview-item">
+            <dt>DEX liquidity</dt>
+            <dd>{{ formattedTokenOverview.liquidityUsd ?? '—' }}</dd>
+          </div>
+          <div class="token-overview-item">
+            <dt>Largest holder share</dt>
+            <dd>{{ formattedTokenOverview.creatorOwnership ?? '—' }}</dd>
+          </div>
         </dl>
         <p v-if="!hasTokenOverviewData" class="placeholder muted">
           No overview data is available for this token yet.
@@ -112,6 +120,77 @@
         </article>
       </div>
     </section>
+
+    <section class="strategy">
+      <h2>Aftershock strategy</h2>
+
+      <p v-if="!aftershockAnalysis.ready" class="placeholder">
+        Fetch a token, pair address, and OHLCV data to populate the strategy playbook.
+      </p>
+
+      <div v-else class="strategy-layout">
+        <article class="strategy-card">
+          <header class="strategy-card-header">
+            <h3>Trading checklist</h3>
+            <p class="muted">
+              Validation across {{ aftershockAnalysis.timeframes.join(', ') }} timeframes.
+            </p>
+          </header>
+          <ul class="checklist">
+            <li v-for="check in aftershockAnalysis.checks" :key="check.id">
+              <span class="status-pill" :class="check.status">{{ check.statusLabel }}</span>
+              <div class="checklist-content">
+                <span class="checklist-label">{{ check.label }}</span>
+                <span class="checklist-value">{{ check.value }}</span>
+                <p v-if="check.message" class="checklist-message">{{ check.message }}</p>
+              </div>
+            </li>
+          </ul>
+        </article>
+
+        <article class="strategy-card">
+          <header class="strategy-card-header">
+            <h3>Fibonacci playbook</h3>
+            <p class="muted" v-if="aftershockAnalysis.fib" key="fib-meta">
+              Swing low {{ aftershockAnalysis.fib.swingLowLabel }} → swing high {{
+                aftershockAnalysis.fib.swingHighLabel
+              }} (Δ {{ aftershockAnalysis.fib.rangeLabel }})
+            </p>
+            <p class="muted" v-else>No reliable swing structure detected.</p>
+          </header>
+
+          <table v-if="aftershockAnalysis.fib" class="fib-table">
+            <thead>
+              <tr>
+                <th>Level</th>
+                <th>Buy zone</th>
+                <th>Capital</th>
+                <th>Target</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="entry in aftershockAnalysis.capitalPlan" :key="entry.level">
+                <td>{{ entry.level }}</td>
+                <td>{{ entry.price }}</td>
+                <td>{{ entry.capitalShare }}</td>
+                <td>{{ entry.target }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="placeholder">Waiting for additional OHLCV data.</p>
+        </article>
+
+        <article class="strategy-card">
+          <header class="strategy-card-header">
+            <h3>Actionable insights</h3>
+            <p class="muted">Current price {{ aftershockAnalysis.currentPriceLabel ?? '—' }}</p>
+          </header>
+          <ul class="insights">
+            <li v-for="note in aftershockAnalysis.insights" :key="note">{{ note }}</li>
+          </ul>
+        </article>
+      </div>
+    </section>
   </main>
 </template>
 
@@ -132,6 +211,8 @@ function createEmptyTokenOverview() {
     volume24h: null,
     priceChange24h: null,
     holders: null,
+    liquidityUsd: null,
+    creatorOwnership: null,
   };
 }
 
@@ -210,6 +291,8 @@ const formattedTokenOverview = computed(() => ({
   volume24h: formatCurrency(tokenOverview.value.volume24h),
   priceChange24h: formatPercentage(tokenOverview.value.priceChange24h),
   holders: formatNumber(tokenOverview.value.holders),
+  liquidityUsd: formatCurrency(tokenOverview.value.liquidityUsd),
+  creatorOwnership: formatPercentage(tokenOverview.value.creatorOwnership),
 }));
 
 async function fetchDexscreenerOverview(address) {
@@ -246,10 +329,65 @@ async function fetchDexscreenerOverview(address) {
         pairInfo.priceChange24Hour ??
         pairInfo.priceChange,
     ),
+    liquidityUsd: normalizeNumber(
+      pairInfo.liquidity?.usd ?? pairInfo.liquidityUSD ?? pairInfo.liquidityUsd,
+    ),
   };
 }
 
-async function fetchTokenHoldersCount(address) {
+function resolveTopHolderPercentage(data) {
+  const arrayCandidates = [
+    data?.topHolders,
+    data?.result,
+    data?.holders,
+    data?.items,
+    data?.data,
+  ];
+
+  let best = null;
+
+  for (const candidate of arrayCandidates) {
+    if (!Array.isArray(candidate)) {
+      continue;
+    }
+
+    candidate.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return;
+      }
+
+      const candidates = [
+        entry.percentage,
+        entry.percent,
+        entry.share,
+        entry.sharePercent,
+        entry.ownerPercentage,
+        entry.value,
+      ];
+
+      for (const option of candidates) {
+        const normalized = normalizeNumber(option);
+        if (normalized !== null) {
+          if (best === null || normalized > best) {
+            best = normalized;
+          }
+          break;
+        }
+      }
+    });
+  }
+
+  if (best === null) {
+    const direct = normalizeNumber(
+      data?.ownerPercentage ?? data?.creatorPercentage ?? data?.creatorOwnership,
+    );
+    return direct;
+  }
+
+  return best;
+}
+
+async function fetchTokenHoldersStats(address) {
   const url = `https://solana-gateway.moralis.io/token/mainnet/holders/${encodeURIComponent(
     address,
   )}`;
@@ -277,11 +415,17 @@ async function fetchTokenHoldersCount(address) {
   for (const candidate of candidates) {
     const normalized = normalizeNumber(candidate);
     if (normalized !== null) {
-      return normalized;
+      return {
+        totalHolders: normalized,
+        topHolderPercentage: resolveTopHolderPercentage(data),
+      };
     }
   }
 
-  return null;
+  return {
+    totalHolders: null,
+    topHolderPercentage: resolveTopHolderPercentage(data),
+  };
 }
 
 async function loadAdditionalTokenOverview(address) {
@@ -289,11 +433,11 @@ async function loadAdditionalTokenOverview(address) {
 
   const [dexResult, holdersResult] = await Promise.allSettled([
     fetchDexscreenerOverview(address),
-    fetchTokenHoldersCount(address),
+    fetchTokenHoldersStats(address),
   ]);
 
   if (dexResult.status === 'fulfilled') {
-    const { priceUsd, volume24h, priceChange24h } = dexResult.value;
+    const { priceUsd, volume24h, priceChange24h, liquidityUsd } = dexResult.value;
 
     if (tokenOverview.value.price === null && priceUsd !== null) {
       tokenOverview.value.price = priceUsd;
@@ -306,6 +450,10 @@ async function loadAdditionalTokenOverview(address) {
     if (priceChange24h !== null) {
       tokenOverview.value.priceChange24h = priceChange24h;
     }
+
+    if (liquidityUsd !== null) {
+      tokenOverview.value.liquidityUsd = liquidityUsd;
+    }
   } else {
     const message =
       dexResult.reason instanceof Error
@@ -315,8 +463,14 @@ async function loadAdditionalTokenOverview(address) {
   }
 
   if (holdersResult.status === 'fulfilled') {
-    if (holdersResult.value !== null) {
-      tokenOverview.value.holders = holdersResult.value;
+    const { totalHolders, topHolderPercentage } = holdersResult.value ?? {};
+
+    if (totalHolders !== null) {
+      tokenOverview.value.holders = totalHolders;
+    }
+
+    if (topHolderPercentage !== null) {
+      tokenOverview.value.creatorOwnership = topHolderPercentage;
     }
   } else {
     const message =
@@ -348,8 +502,8 @@ const timeframeOptions = [
 ];
 
 const timeframeConfigs = ref([
-  { id: 'tf-1', label: 'Shortest timeframe', timeframe: '1min', data: null, error: '', loading: false },
-  { id: 'tf-2', label: 'Medium timeframe', timeframe: '10min', data: null, error: '', loading: false },
+  { id: 'tf-1', label: 'Shortest timeframe', timeframe: '10min', data: null, error: '', loading: false },
+  { id: 'tf-2', label: 'Medium timeframe', timeframe: '30min', data: null, error: '', loading: false },
   { id: 'tf-3', label: 'Longest timeframe', timeframe: '1h', data: null, error: '', loading: false },
 ]);
 
@@ -474,6 +628,443 @@ watch(
     }
   },
 );
+
+function extractOhlcvSeries(raw) {
+  if (!raw) {
+    return [];
+  }
+
+  const arrayCandidates = [];
+
+  if (Array.isArray(raw)) {
+    arrayCandidates.push(raw);
+  }
+
+  const nestedKeys = ['items', 'data', 'results', 'values', 'candles', 'ohlcv', 'entries'];
+
+  nestedKeys.forEach((key) => {
+    const candidate = raw?.[key];
+    if (Array.isArray(candidate)) {
+      arrayCandidates.push(candidate);
+    }
+  });
+
+  const source = arrayCandidates.find((candidate) => candidate.length) ?? [];
+
+  const points = source
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const open = normalizeNumber(entry.open ?? entry.o ?? entry.Open ?? entry.price_open);
+      const high = normalizeNumber(entry.high ?? entry.h ?? entry.High ?? entry.price_high);
+      const low = normalizeNumber(entry.low ?? entry.l ?? entry.Low ?? entry.price_low);
+      const close = normalizeNumber(entry.close ?? entry.c ?? entry.Close ?? entry.price_close);
+      const volume = normalizeNumber(entry.volume ?? entry.v ?? entry.Volume ?? entry.baseVolume);
+
+      const timestampRaw =
+        entry.timestamp ?? entry.ts ?? entry.time ?? entry.t ?? entry.startTime ?? entry.start;
+
+      const timestamp = (() => {
+        if (timestampRaw instanceof Date) {
+          return timestampRaw.getTime();
+        }
+
+        const parsed = Number(timestampRaw);
+        if (Number.isFinite(parsed)) {
+          return parsed > 0 && parsed < 1e12 ? parsed * 1000 : parsed;
+        }
+
+        if (typeof timestampRaw === 'string') {
+          const date = new Date(timestampRaw);
+          const time = date.getTime();
+          if (!Number.isNaN(time)) {
+            return time;
+          }
+        }
+
+        return null;
+      })();
+
+      if (
+        open === null &&
+        high === null &&
+        low === null &&
+        close === null &&
+        volume === null &&
+        timestamp === null
+      ) {
+        return null;
+      }
+
+      return {
+        open,
+        high,
+        low,
+        close,
+        volume,
+        timestamp,
+      };
+    })
+    .filter(Boolean);
+
+  return points.sort((a, b) => {
+    if (a.timestamp === null) {
+      return -1;
+    }
+    if (b.timestamp === null) {
+      return 1;
+    }
+    return a.timestamp - b.timestamp;
+  });
+}
+
+function getSeriesForConfig(config) {
+  if (!config) {
+    return [];
+  }
+
+  return extractOhlcvSeries(config.data);
+}
+
+function average(values) {
+  const filtered = values.filter((value) => Number.isFinite(value));
+  if (!filtered.length) {
+    return null;
+  }
+  return filtered.reduce((sum, value) => sum + value, 0) / filtered.length;
+}
+
+function computeVolumeTrend(series) {
+  if (!series.length) {
+    return null;
+  }
+
+  const recent = series.slice(-12);
+  if (recent.length < 6) {
+    return null;
+  }
+
+  const midpoint = Math.floor(recent.length / 2);
+  const earlier = recent.slice(0, midpoint).map((point) => point.volume ?? null);
+  const later = recent.slice(midpoint).map((point) => point.volume ?? null);
+
+  const earlierAverage = average(earlier);
+  const laterAverage = average(later);
+
+  if (earlierAverage === null || laterAverage === null || earlierAverage === 0) {
+    return null;
+  }
+
+  const ratio = laterAverage / earlierAverage;
+
+  return {
+    ratio,
+    trendUp: ratio >= 1.05,
+  };
+}
+
+function computePriceImpulse(series) {
+  if (!series.length) {
+    return null;
+  }
+
+  const window = series.slice(-24);
+  const closes = window.map((point) => point.close ?? null).filter((value) => value !== null);
+
+  if (closes.length < 2) {
+    return null;
+  }
+
+  const low = Math.min(...closes);
+  const high = Math.max(...closes);
+  const last = closes[closes.length - 1];
+
+  if (!Number.isFinite(low) || !Number.isFinite(high) || low <= 0) {
+    return null;
+  }
+
+  const changeFromLow = ((last - low) / low) * 100;
+  const highChange = ((high - low) / low) * 100;
+
+  return {
+    changeFromLow,
+    highChange,
+    last,
+    low,
+    high,
+  };
+}
+
+function computeFibLevels(series) {
+  const recent = series.slice(-60).filter((point) => Number.isFinite(point.high) && Number.isFinite(point.low));
+
+  if (recent.length < 2) {
+    return null;
+  }
+
+  const highs = recent.map((point) => point.high);
+  const lows = recent.map((point) => point.low);
+
+  const swingHigh = Math.max(...highs);
+  const swingLow = Math.min(...lows);
+
+  if (!Number.isFinite(swingHigh) || !Number.isFinite(swingLow) || swingHigh <= swingLow) {
+    return null;
+  }
+
+  const range = swingHigh - swingLow;
+  const lastClose = recent[recent.length - 1]?.close ?? null;
+  const retraceRatio =
+    lastClose !== null && Number.isFinite(lastClose) ? (swingHigh - lastClose) / range : null;
+
+  const fibLevels = [0.618, 0.5, 0.382, 0.236].map((ratio) => ({
+    ratio,
+    price: swingHigh - range * ratio,
+  }));
+
+  return {
+    swingHigh,
+    swingLow,
+    range,
+    lastClose,
+    retraceRatio,
+    fibLevels,
+    extension702: swingHigh + range * 0.702,
+  };
+}
+
+const timeframeSeries = computed(() => ({
+  short: getSeriesForConfig(timeframeConfigs.value[0]),
+  medium: getSeriesForConfig(timeframeConfigs.value[1]),
+  long: getSeriesForConfig(timeframeConfigs.value[2]),
+}));
+
+function formatPrice(value) {
+  const normalized = normalizeNumber(value);
+  if (normalized === null) {
+    return '—';
+  }
+
+  const maximumFractionDigits = Math.abs(normalized) < 1 ? 6 : 4;
+
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits,
+  }).format(normalized);
+}
+
+const aftershockAnalysis = computed(() => {
+  const overview = tokenOverview.value;
+  const hasPair = Boolean(pairAddress.value);
+  const { short, medium, long } = timeframeSeries.value;
+
+  if (!hasPair || (!short.length && !medium.length && !long.length)) {
+    return {
+      ready: false,
+      checks: [],
+      fib: null,
+      capitalPlan: [],
+      insights: [],
+      timeframes: [],
+      currentPriceLabel: null,
+    };
+  }
+
+  const checks = [];
+
+  function addCheck(id, label, status, value, message) {
+    const statusLabel =
+      status === 'pass' ? 'Pass' : status === 'fail' ? 'Fail' : 'Review';
+
+    checks.push({
+      id,
+      label,
+      status,
+      statusLabel,
+      value,
+      message,
+    });
+  }
+
+  const volume24h = overview.volume24h;
+  const volumeStatus =
+    volume24h === null ? 'review' : volume24h >= 100000 ? 'pass' : 'fail';
+  addCheck('volume', '24h volume ≥ $100k', volumeStatus, formattedTokenOverview.value.volume24h ?? '—');
+
+  const liquidity = overview.liquidityUsd;
+  const liquidityStatus =
+    liquidity === null ? 'review' : liquidity >= 50000 ? 'pass' : 'fail';
+  addCheck(
+    'liquidity',
+    'DEX liquidity ≥ $50k',
+    liquidityStatus,
+    formattedTokenOverview.value.liquidityUsd ?? '—',
+  );
+
+  const holders = overview.holders;
+  const holdersStatus = holders === null ? 'review' : holders >= 50 ? 'pass' : 'fail';
+  addCheck('holders', 'Holder count ≥ 50', holdersStatus, formattedTokenOverview.value.holders ?? '—');
+
+  const creatorOwnership = overview.creatorOwnership;
+  const creatorStatus =
+    creatorOwnership === null ? 'review' : creatorOwnership <= 10 ? 'pass' : 'fail';
+  addCheck(
+    'creatorOwnership',
+    'Largest holder ≤ 10%',
+    creatorStatus,
+    formattedTokenOverview.value.creatorOwnership ?? '—',
+  );
+
+  const impulse = computePriceImpulse(long.length ? long : medium);
+  const priceChange = overview.priceChange24h;
+  const impulseStatus = (() => {
+    if (priceChange === null && !impulse) {
+      return 'review';
+    }
+
+    const change = priceChange ?? impulse?.changeFromLow;
+    if (change === null || change === undefined) {
+      return 'review';
+    }
+
+    return change >= 30 ? 'pass' : 'fail';
+  })();
+
+  addCheck(
+    'impulse',
+    'Impulse ≥ +30% in 24h',
+    impulseStatus,
+    formattedTokenOverview.value.priceChange24h ??
+      (impulse ? `${impulse.changeFromLow.toFixed(2)}%` : '—'),
+    impulse && priceChange !== null && Math.abs(priceChange - impulse.changeFromLow) > 10
+      ? 'Moralis OHLC and DEX price change differ notably; double-check momentum.'
+      : undefined,
+  );
+
+  const volumeTrendInfo = computeVolumeTrend(short.length ? short : medium);
+  const volumeTrendStatus = volumeTrendInfo ? (volumeTrendInfo.trendUp ? 'pass' : 'fail') : 'review';
+  addCheck(
+    'volumeTrend',
+    'Volume rising on retrace',
+    volumeTrendStatus,
+    volumeTrendInfo ? `${(volumeTrendInfo.ratio * 100 - 100).toFixed(1)}% vs prior` : '—',
+  );
+
+  const fib = computeFibLevels(short.length ? short : medium);
+  let correctionStatus = 'review';
+  let correctionMessage;
+
+  if (fib && fib.retraceRatio !== null) {
+    correctionStatus = fib.retraceRatio <= 0.618 ? 'pass' : 'fail';
+    if (fib.retraceRatio > 0.618) {
+      correctionMessage = 'Retracement exceeded 61.8% — momentum may be invalid.';
+    }
+  }
+
+  addCheck(
+    'correctionDepth',
+    'Pullback remains above 0.618',
+    correctionStatus,
+    fib && fib.retraceRatio !== null ? `${(fib.retraceRatio * 100).toFixed(1)}%` : '—',
+    correctionMessage,
+  );
+
+  const fibPlan = [];
+  const insights = [];
+
+  if (fib) {
+    const targetMap = {
+      '0.618': '0.702',
+      '0.5': '0.618',
+      '0.382': '0.5',
+      '0.236': '0.382',
+    };
+
+    const capitalDistribution = {
+      '0.618': 'Optional',
+      '0.5': '20%',
+      '0.382': '30%',
+      '0.236': '50%',
+    };
+
+    fib.fibLevels.forEach((level) => {
+      const ratioLabel = level.ratio.toFixed(3);
+      const capitalShare = capitalDistribution[ratioLabel] ?? '—';
+      const targetLevel = targetMap[ratioLabel];
+      let targetPriceLabel = '—';
+
+      if (targetLevel) {
+        targetPriceLabel =
+          targetLevel === '0.702'
+            ? formatPrice(fib.extension702)
+            : formatPrice(fib.swingHigh - fib.range * Number(targetLevel));
+      }
+
+      fibPlan.push({
+        level: ratioLabel,
+        price: formatPrice(level.price),
+        capitalShare,
+        target: targetLevel ? `${targetLevel} → ${targetPriceLabel}` : '—',
+      });
+    });
+
+    if (fibPlan.length) {
+      insights.push(
+        `Monitor reactions near ${fibPlan
+          .map((entry) => `${entry.level} (${entry.price})`)
+          .join(', ')} for staged entries.`,
+      );
+    }
+
+    insights.push(
+      `Extension target at 0.702 sits around ${formatPrice(fib.extension702)} after reclaiming the high.`,
+    );
+
+    if (fib.lastClose !== null) {
+      const relative = ((fib.swingHigh - fib.lastClose) / fib.range) * 100;
+      insights.push(`Current pullback depth: ${relative.toFixed(1)}% from swing high.`);
+    }
+  } else {
+    insights.push('Collect additional candles to establish a reliable swing structure.');
+  }
+
+  if (volumeStatus === 'fail') {
+    insights.push('24h volume is below the $100k safety threshold — consider skipping this setup.');
+  }
+
+  if (liquidityStatus === 'fail') {
+    insights.push('Pool liquidity under $50k increases slippage risk.');
+  }
+
+  if (holdersStatus === 'fail') {
+    insights.push('Holder count is thin; community traction may be weak.');
+  }
+
+  if (creatorStatus === 'fail') {
+    insights.push('A whale/creator controls more than 10% of supply — high rug risk.');
+  }
+
+  const timeframeLabels = timeframeConfigs.value.map((config) => config.timeframe);
+
+  return {
+    ready: true,
+    checks,
+    fib: fib
+      ? {
+          swingHighLabel: formatPrice(fib.swingHigh),
+          swingLowLabel: formatPrice(fib.swingLow),
+          rangeLabel: formatPrice(fib.range),
+        }
+      : null,
+    capitalPlan: fibPlan,
+    insights,
+    timeframes: timeframeLabels,
+    currentPriceLabel: formattedTokenOverview.value.price ?? formatPrice(overview.price),
+  };
+});
 
 async function fetchPairAddress() {
   if (!hasApiKey.value) {
@@ -787,6 +1378,167 @@ select:focus {
     align-items: flex-end;
     justify-content: space-between;
     gap: 1rem;
+  }
+}
+
+.strategy {
+  background: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.strategy h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.strategy-layout {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.strategy-card {
+  background: #f8fafc;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.strategy-card-header h3 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.strategy-card-header .muted {
+  margin: 0.25rem 0 0;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.checklist li {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #0f172a;
+}
+
+.status-pill.pass {
+  background: rgba(34, 197, 94, 0.2);
+  color: #166534;
+}
+
+.status-pill.fail {
+  background: rgba(248, 113, 113, 0.25);
+  color: #991b1b;
+}
+
+.status-pill.review {
+  background: rgba(129, 140, 248, 0.2);
+  color: #312e81;
+}
+
+.checklist-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.checklist-label {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.checklist-value {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.9rem;
+  color: #334155;
+}
+
+.checklist-message {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #7c3aed;
+}
+
+.fib-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.fib-table th,
+.fib-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.fib-table th {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.fib-table td {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.insights {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  color: #1f2937;
+}
+
+.insights li {
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 720px) {
+  .checklist li {
+    grid-template-columns: 1fr;
+  }
+
+  .status-pill {
+    justify-content: flex-start;
   }
 }
 </style>

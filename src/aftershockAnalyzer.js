@@ -190,6 +190,16 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
       change24h,
       mtf: { '10m': t1, '30m': t2, '1h': t3 },
       invalidations: invalids,
+      ohlcv: {
+        '10m': ohlcv10m,
+        '30m': ohlcv30m,
+        '1h': ohlcv1h,
+      },
+      impulseSource: {
+        label: configs?.[0]?.label ?? 'Shortest timeframe',
+        timeframe: configs?.[0]?.timeframe ?? null,
+        candles: ohlcv10m.length,
+      },
     },
   };
 }

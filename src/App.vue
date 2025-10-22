@@ -141,6 +141,8 @@
           </div>
         </div>
 
+        <p v-if="aftershockDrawGuidance" class="aftershock-guidance">{{ aftershockDrawGuidance }}</p>
+
         <div v-if="aftershockFibLevels.length" class="aftershock-fib">
           <h3>Fibonacci retracement levels</h3>
           <ul>
@@ -160,6 +162,24 @@
               <span class="reason-detail">{{ reason.detail }}</span>
             </li>
           </ul>
+        </div>
+
+        <div v-if="aftershockOhlcvSources.length" class="aftershock-ohlcv">
+          <h3>OHLCV inputs used in analysis</h3>
+          <div class="aftershock-ohlcv-list">
+            <article v-for="source in aftershockOhlcvSources" :key="source.key" class="aftershock-ohlcv-card">
+              <header>
+                <h4>{{ source.label }}</h4>
+                <p class="aftershock-ohlcv-meta">
+                  {{ source.candleCount }} candles · timeframe setting: {{ source.timeframe || 'n/a' }}
+                </p>
+              </header>
+              <details>
+                <summary>Show candles</summary>
+                <pre>{{ source.serialized }}</pre>
+              </details>
+            </article>
+          </div>
         </div>
 
         <details class="aftershock-evidence">
@@ -495,6 +515,60 @@ const timeframeConfigs = ref([
   { id: 'tf-2', label: 'Medium timeframe', timeframe: '10min', data: null, error: '', loading: false },
   { id: 'tf-3', label: 'Longest timeframe', timeframe: '1h', data: null, error: '', loading: false },
 ]);
+
+const aftershockDrawGuidance = computed(() => {
+  const impulseSource = aftershockAnalysis.value?.evidence?.impulseSource;
+  if (!impulseSource) {
+    return '';
+  }
+
+  if (!impulseSource.candles) {
+    const label = impulseSource.label ?? 'impulse timeframe';
+    return `Insufficient candles in the ${label.toLowerCase()} dataset to anchor Fibonacci levels.`;
+  }
+
+  const timeframeLabel = impulseSource.label ?? 'Shortest timeframe';
+  const timeframeSetting = impulseSource.timeframe ?? 'selected interval';
+  return `Draw Fibonacci levels on the ${timeframeLabel.toLowerCase()} (${timeframeSetting}) chart — this is the dataset used to detect the impulse.`;
+});
+
+const aftershockOhlcvSources = computed(() => {
+  const evidence = aftershockAnalysis.value?.evidence;
+  const impulseSource = evidence?.impulseSource;
+  const ohlcv = evidence?.ohlcv;
+  if (!ohlcv) {
+    return [];
+  }
+
+  return Object.entries(ohlcv).map(([key, candles]) => {
+    const candleArray = Array.isArray(candles) ? candles : [];
+    const label =
+      key === '10m'
+        ? impulseSource?.label ?? 'Shortest timeframe'
+        : key === '30m'
+        ? 'Medium timeframe'
+        : key === '1h'
+        ? 'Longest timeframe'
+        : key;
+
+    const timeframeSetting =
+      key === '10m'
+        ? impulseSource?.timeframe ?? timeframeConfigs.value?.[0]?.timeframe
+        : key === '30m'
+        ? timeframeConfigs.value?.[1]?.timeframe
+        : key === '1h'
+        ? timeframeConfigs.value?.[2]?.timeframe
+        : undefined;
+
+    return {
+      key,
+      label,
+      timeframe: timeframeSetting,
+      candleCount: candleArray.length,
+      serialized: JSON.stringify(candleArray, null, 2),
+    };
+  });
+});
 
 function formatDateInput(date) {
   return date.toISOString().slice(0, 10);
@@ -953,6 +1027,15 @@ select:focus {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.aftershock-guidance {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: #eef2ff;
+  color: #312e81;
+  font-weight: 500;
+}
+
 .aftershock-fib {
   margin-top: 1.5rem;
 }
@@ -1055,6 +1138,53 @@ select:focus {
   margin: 0;
   display: grid;
   gap: 0.75rem;
+}
+
+.aftershock-ohlcv {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.aftershock-ohlcv-list {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.aftershock-ohlcv-card {
+  background: #f8fafc;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+}
+
+.aftershock-ohlcv-card h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.aftershock-ohlcv-meta {
+  margin: 0.25rem 0 0;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.aftershock-ohlcv-card details {
+  background: white;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.aftershock-ohlcv-card pre {
+  background: transparent;
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.75rem;
 }
 
 .aftershock-reasons li {

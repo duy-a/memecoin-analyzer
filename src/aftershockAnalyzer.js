@@ -1,3 +1,5 @@
+const MAX_SETUP_SCORE = 85;
+
 export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
   // === User Inputs (adjustable thresholds) ===
   const minLiquidity = 50000;
@@ -61,6 +63,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
     return {
       verdict: 'No Trade',
       setup_score: 0,
+      setup_score_max: MAX_SETUP_SCORE,
       reasons: [{ tag: 'DATA_MISSING', detail: 'Insufficient OHLCV data' }],
       evidence: {
         liquidity,
@@ -75,7 +78,13 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
   const impulse = detectImpulse(ohlcv10m);
   if (!impulse) {
     reasons.push({ tag: 'IMPULSE_FAIL', detail: 'No valid 30%+ impulse found' });
-    return { verdict: 'Avoid / Not Valid', setup_score: setupScore, reasons, evidence: { liquidity, volume24h, holders, change24h } };
+    return {
+      verdict: 'Avoid / Not Valid',
+      setup_score: setupScore,
+      setup_score_max: MAX_SETUP_SCORE,
+      reasons,
+      evidence: { liquidity, volume24h, holders, change24h },
+    };
   }
   const [swingLow, swingHigh, gainPct] = impulse;
   reasons.push({
@@ -91,6 +100,12 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
   });
   fib['0'] = swingLow;
   fib['1'] = swingHigh;
+
+  const fibLevelDetails = fibLevels.map((level) => {
+    const fibPrice = fib[level];
+    const isValid = Number.isFinite(price) && Number.isFinite(fibPrice) ? price >= fibPrice : null;
+    return { level, price: fibPrice, isValid };
+  });
 
   // === Price position vs Fib ===
   const entryZone = getEntryZone(price, fib);
@@ -146,11 +161,13 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
   return {
     verdict,
     setup_score: setupScore,
+    setup_score_max: MAX_SETUP_SCORE,
     reasons,
     evidence: {
       swingLow,
       swingHigh,
       fib,
+      fibLevels: fibLevelDetails,
       price,
       impulseChangePct: gainPct * 100,
       liquidity,

@@ -132,8 +132,24 @@
           </div>
           <div class="summary-item">
             <span class="summary-label">Setup score</span>
-            <span class="summary-value">{{ aftershockAnalysis.setup_score }}</span>
+            <span class="summary-value">
+              {{ aftershockAnalysis.setup_score }}
+              <template v-if="aftershockAnalysis.setup_score_max">
+                / {{ aftershockAnalysis.setup_score_max }}
+              </template>
+            </span>
           </div>
+        </div>
+
+        <div v-if="aftershockFibLevels.length" class="aftershock-fib">
+          <h3>Fibonacci retracement levels</h3>
+          <ul>
+            <li v-for="level in aftershockFibLevels" :key="level.level" class="fib-level">
+              <span class="fib-label">Fib {{ level.levelLabel }}</span>
+              <span class="fib-price">{{ level.formattedPrice ?? '—' }}</span>
+              <span :class="['fib-status', `fib-status--${level.statusClass}`]">{{ level.statusText }}</span>
+            </li>
+          </ul>
         </div>
 
         <div v-if="aftershockAnalysis.reasons?.length" class="aftershock-reasons">
@@ -398,10 +414,44 @@ const aftershockAnalysis = computed(() => {
     return {
       verdict: 'Error',
       setup_score: 0,
+      setup_score_max: 0,
       reasons: [{ tag: 'ANALYSIS_ERROR', detail: message }],
       evidence: {},
     };
   }
+});
+
+const aftershockFibLevels = computed(() => {
+  const levels = aftershockAnalysis.value?.evidence?.fibLevels;
+  if (!Array.isArray(levels)) {
+    return [];
+  }
+
+  return levels.map((entry) => {
+    const formattedPrice = formatCurrency(entry.price);
+    const normalizedLevel = typeof entry.level === 'number' ? entry.level : Number(entry.level);
+    const levelLabel = Number.isFinite(normalizedLevel)
+      ? normalizedLevel.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
+      : entry.level;
+
+    let statusText = 'Unknown';
+    let statusClass = 'unknown';
+    if (entry.isValid === true) {
+      statusText = 'Holding';
+      statusClass = 'valid';
+    } else if (entry.isValid === false) {
+      statusText = 'Breached';
+      statusClass = 'invalid';
+    }
+
+    return {
+      level: entry.level,
+      levelLabel,
+      formattedPrice,
+      statusText,
+      statusClass,
+    };
+  });
 });
 
 const formattedAftershockEvidence = computed(() => {
@@ -889,6 +939,69 @@ select:focus {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.aftershock-fib {
+  margin-top: 1.5rem;
+}
+
+.aftershock-fib h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  color: #111827;
+}
+
+.aftershock-fib ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fib-level {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+}
+
+.fib-label {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.fib-price {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: #1e293b;
+}
+
+.fib-status {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.fib-status--valid {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+}
+
+.fib-status--invalid {
+  background: rgba(239, 68, 68, 0.15);
+  color: #b91c1c;
+}
+
+.fib-status--unknown {
+  background: rgba(148, 163, 184, 0.15);
+  color: #475569;
 }
 
 .summary-item {

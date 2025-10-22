@@ -57,6 +57,10 @@
             <dt>Total holders</dt>
             <dd>{{ formattedTokenOverview.holders ?? '—' }}</dd>
           </div>
+          <div class="token-overview-item">
+            <dt>DEX liquidity</dt>
+            <dd>{{ formattedTokenOverview.dexLiquidity ?? '—' }}</dd>
+          </div>
         </dl>
         <p v-if="!hasTokenOverviewData" class="placeholder muted">
           No overview data is available for this token yet.
@@ -112,11 +116,48 @@
         </article>
       </div>
     </section>
+
+    <section class="aftershock" aria-live="polite">
+      <h2>Aftershock strategy assessment</h2>
+
+      <p v-if="!tokenOverviewRequested" class="placeholder">
+        Submit a token address to run the Aftershock analysis.
+      </p>
+      <p v-else-if="timeframeLoading" class="placeholder">Calculating Aftershock setup…</p>
+      <div v-else class="aftershock-content">
+        <div class="aftershock-summary">
+          <div class="summary-item">
+            <span class="summary-label">Verdict</span>
+            <span class="summary-value verdict">{{ aftershockAnalysis.verdict }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Setup score</span>
+            <span class="summary-value">{{ aftershockAnalysis.setup_score }}</span>
+          </div>
+        </div>
+
+        <div v-if="aftershockAnalysis.reasons?.length" class="aftershock-reasons">
+          <h3>Key factors</h3>
+          <ul>
+            <li v-for="reason in aftershockAnalysis.reasons" :key="`${reason.tag}-${reason.detail}`">
+              <span class="reason-tag">{{ reason.tag }}</span>
+              <span class="reason-detail">{{ reason.detail }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <details class="aftershock-evidence">
+          <summary>Show evidence</summary>
+          <pre>{{ formattedAftershockEvidence }}</pre>
+        </details>
+      </div>
+    </section>
   </main>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue';
+import { analyzeTokenAftershock } from './aftershockAnalyzer';
 
 const tokenAddress = ref('');
 const pairAddress = ref('');
@@ -132,6 +173,7 @@ function createEmptyTokenOverview() {
     volume24h: null,
     priceChange24h: null,
     holders: null,
+    dexLiquidity: null,
   };
 }
 
@@ -210,6 +252,7 @@ const formattedTokenOverview = computed(() => ({
   volume24h: formatCurrency(tokenOverview.value.volume24h),
   priceChange24h: formatPercentage(tokenOverview.value.priceChange24h),
   holders: formatNumber(tokenOverview.value.holders),
+  dexLiquidity: formatCurrency(tokenOverview.value.dexLiquidity),
 }));
 
 async function fetchDexscreenerOverview(address) {
@@ -230,6 +273,7 @@ async function fetchDexscreenerOverview(address) {
       priceUsd: null,
       volume24h: null,
       priceChange24h: null,
+      liquidityUsd: null,
     };
   }
 
@@ -245,6 +289,13 @@ async function fetchDexscreenerOverview(address) {
         pairInfo.priceChange24h ??
         pairInfo.priceChange24Hour ??
         pairInfo.priceChange,
+    ),
+    liquidityUsd: normalizeNumber(
+      pairInfo.liquidity?.usd ??
+        pairInfo.liquidityUsd ??
+        pairInfo.liquidityUSD ??
+        pairInfo.liquidity?.usdValue ??
+        pairInfo.liquidity,
     ),
   };
 }
@@ -293,7 +344,7 @@ async function loadAdditionalTokenOverview(address) {
   ]);
 
   if (dexResult.status === 'fulfilled') {
-    const { priceUsd, volume24h, priceChange24h } = dexResult.value;
+    const { priceUsd, volume24h, priceChange24h, liquidityUsd } = dexResult.value;
 
     if (tokenOverview.value.price === null && priceUsd !== null) {
       tokenOverview.value.price = priceUsd;
@@ -305,6 +356,10 @@ async function loadAdditionalTokenOverview(address) {
 
     if (priceChange24h !== null) {
       tokenOverview.value.priceChange24h = priceChange24h;
+    }
+
+    if (liquidityUsd !== null && liquidityUsd !== undefined) {
+      tokenOverview.value.dexLiquidity = liquidityUsd;
     }
   } else {
     const message =
@@ -330,6 +385,32 @@ async function loadAdditionalTokenOverview(address) {
     tokenOverviewError.value = errors.join(' ');
   }
 }
+
+const timeframeLoading = computed(() =>
+  timeframeConfigs.value.some((config) => config.loading),
+);
+
+const aftershockAnalysis = computed(() => {
+  try {
+    return analyzeTokenAftershock(tokenOverview, timeframeConfigs.value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown analysis error';
+    return {
+      verdict: 'Error',
+      setup_score: 0,
+      reasons: [{ tag: 'ANALYSIS_ERROR', detail: message }],
+      evidence: {},
+    };
+  }
+});
+
+const formattedAftershockEvidence = computed(() => {
+  const evidence = aftershockAnalysis.value?.evidence;
+  if (!evidence || Object.keys(evidence).length === 0) {
+    return 'No evidence available.';
+  }
+  return JSON.stringify(evidence, null, 2);
+});
 
 const timeframeOptions = [
   '1s',
@@ -779,6 +860,117 @@ select:focus {
 
 .card-content .placeholder {
   color: #94a3b8;
+}
+
+.aftershock {
+  background: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.aftershock h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.aftershock-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.aftershock-summary {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.summary-item {
+  background: #eef2ff;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.summary-label {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  color: #4338ca;
+  font-weight: 700;
+}
+
+.summary-value {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: #1e1b4b;
+}
+
+.summary-value.verdict {
+  text-transform: uppercase;
+}
+
+.aftershock-reasons h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+  color: #1f2937;
+}
+
+.aftershock-reasons ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.aftershock-reasons li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.reason-tag {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #4338ca;
+  background: rgba(67, 56, 202, 0.1);
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+}
+
+.reason-detail {
+  color: #1f2937;
+}
+
+.aftershock-evidence summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #4338ca;
+}
+
+.aftershock-evidence pre {
+  margin-top: 0.75rem;
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
 }
 
 @media (min-width: 900px) {

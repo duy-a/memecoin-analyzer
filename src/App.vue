@@ -534,40 +534,56 @@ const aftershockDrawGuidance = computed(() => {
 
 const aftershockOhlcvSources = computed(() => {
   const evidence = aftershockAnalysis.value?.evidence;
-  const impulseSource = evidence?.impulseSource;
   const ohlcv = evidence?.ohlcv;
-  if (!ohlcv) {
+  if (!ohlcv || typeof ohlcv !== 'object') {
     return [];
   }
 
-  return Object.entries(ohlcv).map(([key, candles]) => {
-    const candleArray = Array.isArray(candles) ? candles : [];
-    const label =
-      key === '10m'
-        ? impulseSource?.label ?? 'Shortest timeframe'
-        : key === '30m'
-        ? 'Medium timeframe'
-        : key === '1h'
-        ? 'Longest timeframe'
-        : key;
+  const configSnapshot = timeframeConfigs.value ?? [];
+  const fallbackMeta = {
+    short: configSnapshot[0] ?? {},
+    '10m': configSnapshot[0] ?? {},
+    medium: configSnapshot[1] ?? {},
+    '30m': configSnapshot[1] ?? {},
+    long: configSnapshot[2] ?? {},
+    '1h': configSnapshot[2] ?? {},
+  };
 
-    const timeframeSetting =
-      key === '10m'
-        ? impulseSource?.timeframe ?? timeframeConfigs.value?.[0]?.timeframe
-        : key === '30m'
-        ? timeframeConfigs.value?.[1]?.timeframe
-        : key === '1h'
-        ? timeframeConfigs.value?.[2]?.timeframe
-        : undefined;
+  const orderMap = new Map([
+    ['short', 0],
+    ['10m', 0],
+    ['medium', 1],
+    ['30m', 1],
+    ['long', 2],
+    ['1h', 2],
+  ]);
 
-    return {
-      key,
-      label,
-      timeframe: timeframeSetting,
-      candleCount: candleArray.length,
-      serialized: JSON.stringify(candleArray, null, 2),
-    };
-  });
+  const labelFallback = (key) => {
+    if (key === 'short' || key === '10m') return 'Shortest timeframe';
+    if (key === 'medium' || key === '30m') return 'Medium timeframe';
+    if (key === 'long' || key === '1h') return 'Longest timeframe';
+    return key;
+  };
+
+  return Object.entries(ohlcv)
+    .map(([key, value]) => {
+      const entry = Array.isArray(value) ? { candles: value } : value ?? {};
+      const candles = Array.isArray(entry.candles) ? entry.candles : Array.isArray(value) ? value : [];
+      const fallback = fallbackMeta[key] ?? {};
+      const label = entry.label ?? fallback.label ?? labelFallback(key);
+      const timeframeValue = entry.timeframe ?? fallback.timeframe ?? null;
+
+      return {
+        key,
+        label,
+        timeframe: timeframeValue ?? 'n/a',
+        candleCount: candles.length,
+        serialized: candles.length ? JSON.stringify(candles, null, 2) : '[]',
+        order: orderMap.has(key) ? orderMap.get(key) : 99,
+      };
+    })
+    .sort((a, b) => a.order - b.order)
+    .map(({ order, ...rest }) => rest);
 });
 
 function formatDateInput(date) {

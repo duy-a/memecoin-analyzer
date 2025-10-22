@@ -86,16 +86,6 @@
           </div>
         </fieldset>
 
-        <fieldset class="field span-2">
-          <legend class="field-label">Safety validation rules</legend>
-          <div class="safety-grid">
-            <label v-for="rule in safetyRuleList" :key="rule.id" class="safety-option">
-              <input type="checkbox" v-model="safetyRules[rule.id]" :disabled="analyzing" />
-              <span>{{ rule.label }}</span>
-            </label>
-          </div>
-        </fieldset>
-
         <div class="actions">
           <button type="submit" :disabled="!hasApiKey || analyzing || selectedTimeframes.length === 0">
             {{ analyzing ? 'Analyzing…' : 'Analyze' }}
@@ -305,24 +295,6 @@ const thresholdGroups = [
   { id: 'over7d', label: 'Token age &gt; 7 days' },
 ];
 
-const safetyRules = reactive({
-  lockedLiquidity: true,
-  creatorLiquidity: true,
-  authorityRevoked: true,
-  topHolders: true,
-  sellTax: true,
-  botVolume: true,
-});
-
-const safetyRuleList = [
-  { id: 'lockedLiquidity', label: 'Locked or burned liquidity ≥ 70%' },
-  { id: 'creatorLiquidity', label: 'Creator liquidity ≤ 20%' },
-  { id: 'authorityRevoked', label: 'Mint and fee authority revoked' },
-  { id: 'topHolders', label: 'Top 10 holders ≤ 35%' },
-  { id: 'sellTax', label: 'Sell tax < 10%' },
-  { id: 'botVolume', label: 'Bot trading volume ≤ 65%' },
-];
-
 const apiKey = import.meta.env.VITE_MORALIS_API_KEY;
 const hasApiKey = computed(() => Boolean(apiKey));
 
@@ -379,7 +351,7 @@ function normalizeNumber(value) {
 
 function parseTokenAddresses(input) {
   return input
-    .split(',')
+    .split(/[\s,]+/)
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
 }
@@ -433,7 +405,9 @@ async function analyzeTokens() {
     for (const address of addresses) {
       // eslint-disable-next-line no-await-in-loop
       const result = await analyzeSingleToken(address);
-      results.push(result);
+      if (result) {
+        results.push(result);
+      }
     }
     analysisResults.value = results;
     lastAnalyzedAt.value = new Date();
@@ -446,147 +420,162 @@ async function analyzeTokens() {
 }
 
 async function analyzeSingleToken(address) {
-  const baseInfo = await fetchMoralisPrice(address);
-  const dexInfo = await fetchDexscreenerOverview(address);
+  let baseInfo = {};
+  let dexInfo = {};
 
-  const pairAddress = baseInfo.pairAddress || dexInfo?.pairAddress;
+  try {
+    baseInfo = await fetchMoralisPrice(address);
+    dexInfo = await fetchDexscreenerOverview(address);
 
-  if (!pairAddress) {
+    const pairAddress = baseInfo.pairAddress || dexInfo?.pairAddress;
+
+    if (!pairAddress) {
+      return buildInsufficientDataResult({
+        address,
+        baseInfo,
+        dexInfo,
+        reason: 'Missing pair address',
+      });
+    }
+
+    const timeframePayloads = await fetchTimeframeData(pairAddress);
+
+    const candlesByTimeframe = timeframePayloads
+      .map((payload) => ({
+        timeframe: payload.timeframe,
+        candles: extractCandles(payload.data),
+        error: payload.error,
+      }))
+      .filter((entry) => entry.candles.length);
+
+    const shortFrames = candlesByTimeframe.filter(
+      (entry) => getTimeframeCategory(entry.timeframe) === 'short',
+    );
+    const highFrames = candlesByTimeframe.filter(
+      (entry) => getTimeframeCategory(entry.timeframe) === 'high',
+    );
+
+    if (shortFrames.length < 2 || !highFrames.length) {
+      return buildInsufficientDataResult({
+        address,
+        baseInfo,
+        dexInfo,
+        reason: 'Insufficient OHLCV coverage',
+      });
+    }
+
+    const sortedFrames = [...candlesByTimeframe].sort(
+      (a, b) => timeframeOrder.get(a.timeframe) - timeframeOrder.get(b.timeframe),
+    );
+
+    const lowestFrame = sortedFrames[0];
+    const highestFrame = sortedFrames[sortedFrames.length - 1];
+    const middleFrame = sortedFrames[Math.min(1, sortedFrames.length - 1)];
+
+    const impulseAnalysis = analyzeImpulse(highestFrame.candles);
+
+    if (!impulseAnalysis.validImpulse) {
+      return buildInvalidResult({
+        address,
+        baseInfo,
+        dexInfo,
+        candlesByTimeframe: sortedFrames,
+        reason: impulseAnalysis.reason ?? 'Impulse structure invalid',
+      });
+    }
+
+    const currentPrice = getCurrentPrice(lowestFrame.candles) ?? baseInfo.priceUsd;
+
+    const fibonacciLevels = computeFibonacciLevels(
+      impulseAnalysis.swingHigh,
+      impulseAnalysis.swingLow,
+    );
+
+    const correction = classifyCorrection(
+      impulseAnalysis.swingHigh,
+      impulseAnalysis.swingLow,
+      currentPrice,
+    );
+    const fibValidation = validateFibonacciLevels(fibonacciLevels, currentPrice);
+
+    const timeframeOutlook = buildTimeframeOutlook({
+      highest: highestFrame,
+      middle: middleFrame,
+      lowest: lowestFrame,
+    });
+
+    const liquidityCheck = evaluateLiquidity({ baseInfo, dexInfo, thresholds });
+    const holderCheck = await evaluateHolders(address, dexInfo);
+    const volumeCheck = evaluateVolume(dexInfo, baseInfo);
+    const buySellRatio = volumeCheck?.ratio ?? dexInfo?.buySellRatio ?? null;
+
+    const validationFlags = compileValidationFlags({
+      liquidityCheck,
+      holderCheck,
+      volumeCheck,
+    });
+
+    const classification = classifySetup({
+      correction,
+      liquidityCheck,
+      holderCheck,
+      impulseAnalysis,
+      buySellRatio,
+      volumeCheck,
+    });
+
+    const entryPlan = buildEntryPlan();
+
+    const notes = buildStrategyNotes({
+      classification,
+      correction,
+      impulseAnalysis,
+      liquidityCheck,
+      holderCheck,
+      volumeCheck,
+    });
+
+    return {
+      id: `${address}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      address,
+      displayName:
+        dexInfo?.name || dexInfo?.baseToken?.name || baseInfo.symbol || address.slice(0, 8),
+      symbol: dexInfo?.symbol || dexInfo?.baseToken?.symbol || baseInfo.symbol || null,
+      status: classification,
+      statusClass: classification.toLowerCase().replace(/\s+/g, '-'),
+      formatted: {
+        price: formatCurrency(currentPrice ?? baseInfo.priceUsd),
+        liquidity: formatCurrency(dexInfo?.liquidityUsd ?? baseInfo.liquidityUsd),
+        volume24h: formatCurrency(dexInfo?.volume24h ?? baseInfo.volume24h),
+        traders: formatNumber(dexInfo?.traders24h ?? dexInfo?.traders ?? null),
+        buySellRatio: formatRatio(buySellRatio),
+      },
+      fibonacciLevelEntries: Object.entries(fibValidation.levels).map(([label, level]) => ({
+        label,
+        price: formatCurrency(level.price) ?? '—',
+        valid: level.valid,
+      })),
+      correctionLabel: correction.label,
+      entryPlan,
+      stopLoss: 'below 0.0',
+      risk: '1–2% of total capital',
+      validationFlags,
+      timeframeAnalysis: timeframeOutlook,
+      notes,
+      baseInfo,
+      dexInfo,
+    };
+  } catch (error) {
     return buildInsufficientDataResult({
       address,
       baseInfo,
       dexInfo,
-      reason: 'Missing pair address',
+      reason:
+        error instanceof Error
+          ? `Analysis failed: ${error.message}`
+          : 'Analysis failed unexpectedly',
     });
   }
-
-  const timeframePayloads = await fetchTimeframeData(pairAddress);
-
-  const candlesByTimeframe = timeframePayloads
-    .map((payload) => ({
-      timeframe: payload.timeframe,
-      candles: extractCandles(payload.data),
-      error: payload.error,
-    }))
-    .filter((entry) => entry.candles.length);
-
-  const shortFrames = candlesByTimeframe.filter(
-    (entry) => getTimeframeCategory(entry.timeframe) === 'short',
-  );
-  const highFrames = candlesByTimeframe.filter(
-    (entry) => getTimeframeCategory(entry.timeframe) === 'high',
-  );
-
-  if (shortFrames.length < 2 || !highFrames.length) {
-    return buildInsufficientDataResult({
-      address,
-      baseInfo,
-      dexInfo,
-      reason: 'Insufficient OHLCV coverage',
-    });
-  }
-
-  const sortedFrames = [...candlesByTimeframe].sort(
-    (a, b) => timeframeOrder.get(a.timeframe) - timeframeOrder.get(b.timeframe),
-  );
-
-  const lowestFrame = sortedFrames[0];
-  const highestFrame = sortedFrames[sortedFrames.length - 1];
-  const middleFrame = sortedFrames[Math.min(1, sortedFrames.length - 1)];
-
-  const impulseAnalysis = analyzeImpulse(highestFrame.candles);
-
-  if (!impulseAnalysis.validImpulse) {
-    return buildInvalidResult({
-      address,
-      baseInfo,
-      dexInfo,
-      candlesByTimeframe: sortedFrames,
-      reason: impulseAnalysis.reason ?? 'Impulse structure invalid',
-    });
-  }
-
-  const currentPrice = getCurrentPrice(lowestFrame.candles) ?? baseInfo.priceUsd;
-
-  const fibonacciLevels = computeFibonacciLevels(
-    impulseAnalysis.swingHigh,
-    impulseAnalysis.swingLow,
-  );
-
-  const correction = classifyCorrection(impulseAnalysis.swingHigh, impulseAnalysis.swingLow, currentPrice);
-  const fibValidation = validateFibonacciLevels(fibonacciLevels, currentPrice);
-
-  const timeframeOutlook = buildTimeframeOutlook({
-    highest: highestFrame,
-    middle: middleFrame,
-    lowest: lowestFrame,
-  });
-
-  const liquidityCheck = evaluateLiquidity({ baseInfo, dexInfo, thresholds });
-  const holderCheck = await evaluateHolders(address, dexInfo);
-  const safetyCheck = evaluateSafety(dexInfo);
-  const volumeCheck = evaluateVolume(dexInfo, baseInfo);
-  const buySellRatio = volumeCheck?.ratio ?? dexInfo?.buySellRatio ?? null;
-
-  const { validationFlags, safetyPassed } = compileValidationFlags({
-    liquidityCheck,
-    holderCheck,
-    safetyCheck,
-    volumeCheck,
-  });
-
-  const classification = classifySetup({
-    correction,
-    liquidityCheck,
-    safetyPassed,
-    holderCheck,
-    impulseAnalysis,
-    buySellRatio,
-    volumeCheck,
-  });
-
-  const entryPlan = buildEntryPlan();
-
-  const notes = buildStrategyNotes({
-    classification,
-    correction,
-    impulseAnalysis,
-    liquidityCheck,
-    holderCheck,
-    safetyCheck,
-    volumeCheck,
-  });
-
-  return {
-    id: `${address}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    address,
-    displayName:
-      dexInfo?.name || dexInfo?.baseToken?.name || baseInfo.symbol || address.slice(0, 8),
-    symbol: dexInfo?.symbol || dexInfo?.baseToken?.symbol || baseInfo.symbol || null,
-    status: classification,
-    statusClass: classification.toLowerCase().replace(/\s+/g, '-'),
-    formatted: {
-      price: formatCurrency(currentPrice ?? baseInfo.priceUsd),
-      liquidity: formatCurrency(dexInfo?.liquidityUsd ?? baseInfo.liquidityUsd),
-      volume24h: formatCurrency(dexInfo?.volume24h ?? baseInfo.volume24h),
-      traders: formatNumber(dexInfo?.traders24h ?? dexInfo?.traders ?? null),
-      buySellRatio: formatRatio(buySellRatio),
-    },
-    fibonacciLevelEntries: Object.entries(fibValidation.levels).map(([label, level]) => ({
-      label,
-      price: formatCurrency(level.price) ?? '—',
-      valid: level.valid,
-    })),
-    correctionLabel: correction.label,
-    entryPlan,
-    stopLoss: 'below 0.0',
-    risk: '1–2% of total capital',
-    validationFlags,
-    timeframeAnalysis: timeframeOutlook,
-    notes,
-    baseInfo,
-    dexInfo,
-  };
 }
 
 function buildInsufficientDataResult({ address, baseInfo, dexInfo, reason }) {
@@ -1231,37 +1220,6 @@ async function fetchHolders(address) {
   }
 }
 
-function evaluateSafety(dexInfo) {
-  const safety = dexInfo?.safety ?? {};
-  return {
-    lockedLiquidity: toBooleanMetric(safety.lockedLiquidity ?? safety.locked ?? null),
-    creatorLiquidity: toBooleanMetric(safety.creatorLiquidity ?? safety.creatorHoldings ?? null),
-    authorityRevoked: toBooleanMetric(
-      safety.mintAuthorityRevoked && safety.freezeAuthorityRevoked
-        ? safety.mintAuthorityRevoked && safety.freezeAuthorityRevoked
-        : null,
-    ),
-    topHolders: toBooleanMetric(
-      dexInfo?.holderStats?.top10Share !== undefined
-        ? dexInfo.holderStats.top10Share <= 0.35
-        : null,
-    ),
-    sellTax: toBooleanMetric(safety.sellTax ?? safety.tax ?? null),
-    botVolume: toBooleanMetric(safety.botVolume ?? null),
-  };
-}
-
-function toBooleanMetric(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'boolean') return value;
-  const numeric = normalizeNumber(value);
-  if (numeric === null) return null;
-  if (numeric <= 1) {
-    return numeric <= 0.35;
-  }
-  return numeric >= 70;
-}
-
 function evaluateVolume(dexInfo, baseInfo) {
   const volume24h = dexInfo?.volume24h ?? baseInfo?.volume24h ?? null;
   const liquidity = dexInfo?.liquidityUsd ?? baseInfo?.liquidityUsd ?? null;
@@ -1285,19 +1243,13 @@ function evaluateVolume(dexInfo, baseInfo) {
   };
 }
 
-function compileValidationFlags({ liquidityCheck, holderCheck, safetyCheck, volumeCheck }) {
+function compileValidationFlags({ liquidityCheck, holderCheck, volumeCheck }) {
   const validationFlags = [];
 
   validationFlags.push({
     label: 'Liquidity & volume',
     passed: liquidityCheck.passed,
     detail: formatLiquidityDetail(liquidityCheck),
-  });
-
-  validationFlags.push({
-    label: 'Safety rules',
-    passed: evaluateSafetyToggles(safetyCheck),
-    detail: summarizeSafety(safetyCheck),
   });
 
   validationFlags.push({
@@ -1312,7 +1264,7 @@ function compileValidationFlags({ liquidityCheck, holderCheck, safetyCheck, volu
     detail: summarizeMarket(volumeCheck),
   });
 
-  return { validationFlags, safetyPassed: evaluateSafetyToggles(safetyCheck) };
+  return validationFlags;
 }
 
 function formatLiquidityDetail(check) {
@@ -1328,46 +1280,6 @@ function formatLiquidityDetail(check) {
     traders ? `${traders} traders/24h` : null,
   ]
     .filter(Boolean)
-    .join(' · ');
-}
-
-function evaluateSafetyToggles(safetyCheck) {
-  const required = [];
-  if (safetyRules.lockedLiquidity) required.push(safetyCheck.lockedLiquidity);
-  if (safetyRules.creatorLiquidity) required.push(safetyCheck.creatorLiquidity);
-  if (safetyRules.authorityRevoked) required.push(safetyCheck.authorityRevoked);
-  if (safetyRules.topHolders) required.push(safetyCheck.topHolders);
-  if (safetyRules.sellTax) required.push(safetyCheck.sellTax);
-  if (safetyRules.botVolume) required.push(safetyCheck.botVolume);
-
-  if (required.some((value) => value === false)) {
-    return false;
-  }
-
-  if (required.every((value) => value === null)) {
-    return null;
-  }
-
-  return true;
-}
-
-function summarizeSafety(safetyCheck) {
-  const labels = [
-    { id: 'lockedLiquidity', label: 'Locked ≥70%' },
-    { id: 'creatorLiquidity', label: 'Creator ≤20%' },
-    { id: 'authorityRevoked', label: 'Authority revoked' },
-    { id: 'topHolders', label: 'Top 10 ≤35%' },
-    { id: 'sellTax', label: 'Sell tax <10%' },
-    { id: 'botVolume', label: 'Bot volume ≤65%' },
-  ];
-
-  return labels
-    .map(({ id, label }) => {
-      const value = safetyCheck[id];
-      if (value === true) return `${label}: ✓`;
-      if (value === false) return `${label}: ✗`;
-      return `${label}: data unavailable`;
-    })
     .join(' · ');
 }
 
@@ -1407,13 +1319,16 @@ function summarizeMarket(volumeCheck) {
 function classifySetup({
   correction,
   liquidityCheck,
-  safetyPassed,
   holderCheck,
   impulseAnalysis,
   buySellRatio,
   volumeCheck,
 }) {
-  if (liquidityCheck.passed === false || safetyPassed === false || holderCheck.passed === false) {
+  if (liquidityCheck.passed === false || holderCheck.passed === false) {
+    return 'Avoid';
+  }
+
+  if (volumeCheck.valid === false || volumeCheck.fdvValid === false) {
     return 'Avoid';
   }
 
@@ -1447,7 +1362,6 @@ function buildStrategyNotes({
   impulseAnalysis,
   liquidityCheck,
   holderCheck,
-  safetyCheck,
   volumeCheck,
 }) {
   const notes = [];
@@ -1456,7 +1370,9 @@ function buildStrategyNotes({
   notes.push(`Correction: ${correction.label}`);
   notes.push(`Liquidity check: ${liquidityCheck.passed ? 'pass' : 'review thresholds'}`);
   notes.push(
-    `Safety: ${evaluateSafetyToggles(safetyCheck) === false ? 'fails configured toggles' : 'meets configured toggles'}`,
+    `Holder distribution: ${
+      holderCheck.passed ? 'healthy' : 'review concentration or growth metrics'
+    }`,
   );
   notes.push(
     `Buy/Sell flow: ${
@@ -1590,20 +1506,6 @@ select[multiple] {
   gap: 0.35rem;
   font-size: 0.9rem;
   color: #334155;
-}
-
-.safety-grid {
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-}
-
-.safety-option {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-weight: 500;
-  color: #0f172a;
 }
 
 .actions {

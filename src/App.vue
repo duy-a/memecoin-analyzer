@@ -57,6 +57,10 @@
             <dt>Total holders</dt>
             <dd>{{ formattedTokenOverview.holders ?? '—' }}</dd>
           </div>
+          <div class="token-overview-item">
+            <dt>DEX liquidity</dt>
+            <dd>{{ formattedTokenOverview.dexLiquidity ?? '—' }}</dd>
+          </div>
         </dl>
         <p v-if="!hasTokenOverviewData" class="placeholder muted">
           No overview data is available for this token yet.
@@ -112,11 +116,84 @@
         </article>
       </div>
     </section>
+
+    <section class="aftershock" aria-live="polite">
+      <h2>Aftershock strategy assessment</h2>
+
+      <p v-if="!tokenOverviewRequested" class="placeholder">
+        Submit a token address to run the Aftershock analysis.
+      </p>
+      <p v-else-if="timeframeLoading" class="placeholder">Calculating Aftershock setup…</p>
+      <div v-else class="aftershock-content">
+        <div class="aftershock-summary">
+          <div class="summary-item">
+            <span class="summary-label">Verdict</span>
+            <span class="summary-value verdict">{{ aftershockAnalysis.verdict }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Setup score</span>
+            <span class="summary-value">
+              {{ aftershockAnalysis.setup_score }}
+              <template v-if="aftershockAnalysis.setup_score_max">
+                / {{ aftershockAnalysis.setup_score_max }}
+              </template>
+            </span>
+          </div>
+        </div>
+
+        <p v-if="aftershockDrawGuidance" class="aftershock-guidance">{{ aftershockDrawGuidance }}</p>
+
+        <div v-if="aftershockFibLevels.length" class="aftershock-fib">
+          <h3>Fibonacci retracement levels</h3>
+          <ul>
+            <li v-for="level in aftershockFibLevels" :key="level.key" class="fib-level">
+              <span class="fib-label">Fib {{ level.levelLabel }}</span>
+              <span class="fib-price">{{ level.formattedPrice ?? '—' }}</span>
+              <span :class="['fib-status', `fib-status--${level.statusClass}`]">{{ level.statusText }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <div v-if="aftershockAnalysis.reasons?.length" class="aftershock-reasons">
+          <h3>Key factors</h3>
+          <ul>
+            <li v-for="reason in aftershockAnalysis.reasons" :key="`${reason.tag}-${reason.detail}`">
+              <span class="reason-tag">{{ reason.tag }}</span>
+              <span class="reason-detail">{{ reason.detail }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <div v-if="aftershockOhlcvSources.length" class="aftershock-ohlcv">
+          <h3>OHLCV inputs used in analysis</h3>
+          <div class="aftershock-ohlcv-list">
+            <article v-for="source in aftershockOhlcvSources" :key="source.key" class="aftershock-ohlcv-card">
+              <header>
+                <h4>{{ source.label }}</h4>
+                <p class="aftershock-ohlcv-meta">
+                  {{ source.candleCount }} candles · timeframe setting: {{ source.timeframe || 'n/a' }}
+                </p>
+              </header>
+              <details>
+                <summary>Show candles</summary>
+                <pre>{{ source.serialized }}</pre>
+              </details>
+            </article>
+          </div>
+        </div>
+
+        <details class="aftershock-evidence">
+          <summary>Show evidence</summary>
+          <pre>{{ formattedAftershockEvidence }}</pre>
+        </details>
+      </div>
+    </section>
   </main>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue';
+import { analyzeTokenAftershock } from './aftershockAnalyzer';
 
 const tokenAddress = ref('');
 const pairAddress = ref('');
@@ -132,6 +209,7 @@ function createEmptyTokenOverview() {
     volume24h: null,
     priceChange24h: null,
     holders: null,
+    dexLiquidity: null,
   };
 }
 
@@ -210,6 +288,7 @@ const formattedTokenOverview = computed(() => ({
   volume24h: formatCurrency(tokenOverview.value.volume24h),
   priceChange24h: formatPercentage(tokenOverview.value.priceChange24h),
   holders: formatNumber(tokenOverview.value.holders),
+  dexLiquidity: formatCurrency(tokenOverview.value.dexLiquidity),
 }));
 
 async function fetchDexscreenerOverview(address) {
@@ -230,6 +309,7 @@ async function fetchDexscreenerOverview(address) {
       priceUsd: null,
       volume24h: null,
       priceChange24h: null,
+      liquidityUsd: null,
     };
   }
 
@@ -245,6 +325,13 @@ async function fetchDexscreenerOverview(address) {
         pairInfo.priceChange24h ??
         pairInfo.priceChange24Hour ??
         pairInfo.priceChange,
+    ),
+    liquidityUsd: normalizeNumber(
+      pairInfo.liquidity?.usd ??
+        pairInfo.liquidityUsd ??
+        pairInfo.liquidityUSD ??
+        pairInfo.liquidity?.usdValue ??
+        pairInfo.liquidity,
     ),
   };
 }
@@ -293,7 +380,7 @@ async function loadAdditionalTokenOverview(address) {
   ]);
 
   if (dexResult.status === 'fulfilled') {
-    const { priceUsd, volume24h, priceChange24h } = dexResult.value;
+    const { priceUsd, volume24h, priceChange24h, liquidityUsd } = dexResult.value;
 
     if (tokenOverview.value.price === null && priceUsd !== null) {
       tokenOverview.value.price = priceUsd;
@@ -305,6 +392,10 @@ async function loadAdditionalTokenOverview(address) {
 
     if (priceChange24h !== null) {
       tokenOverview.value.priceChange24h = priceChange24h;
+    }
+
+    if (liquidityUsd !== null && liquidityUsd !== undefined) {
+      tokenOverview.value.dexLiquidity = liquidityUsd;
     }
   } else {
     const message =
@@ -331,6 +422,78 @@ async function loadAdditionalTokenOverview(address) {
   }
 }
 
+const timeframeLoading = computed(() =>
+  timeframeConfigs.value.some((config) => config.loading),
+);
+
+const aftershockAnalysis = computed(() => {
+  try {
+    return analyzeTokenAftershock(tokenOverview, timeframeConfigs.value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown analysis error';
+    return {
+      verdict: 'Error',
+      setup_score: 0,
+      setup_score_max: 0,
+      reasons: [{ tag: 'ANALYSIS_ERROR', detail: message }],
+      evidence: {},
+    };
+  }
+});
+
+const aftershockFibLevels = computed(() => {
+  const levels = aftershockAnalysis.value?.evidence?.fibLevels;
+  if (!Array.isArray(levels)) {
+    return [];
+  }
+
+  const sorted = [...levels].sort((a, b) => {
+    const aLevel = typeof a.level === 'number' ? a.level : Number(a.level);
+    const bLevel = typeof b.level === 'number' ? b.level : Number(b.level);
+    if (!Number.isFinite(aLevel) || !Number.isFinite(bLevel)) {
+      return 0;
+    }
+    return bLevel - aLevel;
+  });
+
+  return sorted.map((entry) => {
+    const formattedPrice = formatCurrency(entry.price);
+    const normalizedLevel = typeof entry.level === 'number' ? entry.level : Number(entry.level);
+    const levelLabel = Number.isFinite(normalizedLevel)
+      ? normalizedLevel.toFixed(normalizedLevel === 0 || normalizedLevel === 1 ? 0 : 3)
+          .replace(/0+$/, '')
+          .replace(/\.$/, '')
+      : entry.level;
+
+    let statusText = 'Unknown';
+    let statusClass = 'unknown';
+    if (entry.isValid === true) {
+      statusText = 'Holding';
+      statusClass = 'valid';
+    } else if (entry.isValid === false) {
+      statusText = 'Breached';
+      statusClass = 'invalid';
+    }
+
+    return {
+      key: `${entry.level}`,
+      level: entry.level,
+      levelLabel,
+      formattedPrice,
+      statusText,
+      statusClass,
+    };
+  });
+});
+
+const formattedAftershockEvidence = computed(() => {
+  const evidence = aftershockAnalysis.value?.evidence;
+  if (!evidence || Object.keys(evidence).length === 0) {
+    return 'No evidence available.';
+  }
+  return JSON.stringify(evidence, null, 2);
+});
+
 const timeframeOptions = [
   '1s',
   '10s',
@@ -352,6 +515,76 @@ const timeframeConfigs = ref([
   { id: 'tf-2', label: 'Medium timeframe', timeframe: '10min', data: null, error: '', loading: false },
   { id: 'tf-3', label: 'Longest timeframe', timeframe: '1h', data: null, error: '', loading: false },
 ]);
+
+const aftershockDrawGuidance = computed(() => {
+  const impulseSource = aftershockAnalysis.value?.evidence?.impulseSource;
+  if (!impulseSource) {
+    return '';
+  }
+
+  if (!impulseSource.candles) {
+    const label = impulseSource.label ?? 'impulse timeframe';
+    return `Insufficient candles in the ${label.toLowerCase()} dataset to anchor Fibonacci levels.`;
+  }
+
+  const timeframeLabel = impulseSource.label ?? 'Shortest timeframe';
+  const timeframeSetting = impulseSource.timeframe ?? 'selected interval';
+  return `Draw Fibonacci levels on the ${timeframeLabel.toLowerCase()} (${timeframeSetting}) chart — this is the dataset used to detect the impulse.`;
+});
+
+const aftershockOhlcvSources = computed(() => {
+  const evidence = aftershockAnalysis.value?.evidence;
+  const ohlcv = evidence?.ohlcv;
+  if (!ohlcv || typeof ohlcv !== 'object') {
+    return [];
+  }
+
+  const configSnapshot = timeframeConfigs.value ?? [];
+  const fallbackMeta = {
+    short: configSnapshot[0] ?? {},
+    '10m': configSnapshot[0] ?? {},
+    medium: configSnapshot[1] ?? {},
+    '30m': configSnapshot[1] ?? {},
+    long: configSnapshot[2] ?? {},
+    '1h': configSnapshot[2] ?? {},
+  };
+
+  const orderMap = new Map([
+    ['short', 0],
+    ['10m', 0],
+    ['medium', 1],
+    ['30m', 1],
+    ['long', 2],
+    ['1h', 2],
+  ]);
+
+  const labelFallback = (key) => {
+    if (key === 'short' || key === '10m') return 'Shortest timeframe';
+    if (key === 'medium' || key === '30m') return 'Medium timeframe';
+    if (key === 'long' || key === '1h') return 'Longest timeframe';
+    return key;
+  };
+
+  return Object.entries(ohlcv)
+    .map(([key, value]) => {
+      const entry = Array.isArray(value) ? { candles: value } : value ?? {};
+      const candles = Array.isArray(entry.candles) ? entry.candles : Array.isArray(value) ? value : [];
+      const fallback = fallbackMeta[key] ?? {};
+      const label = entry.label ?? fallback.label ?? labelFallback(key);
+      const timeframeValue = entry.timeframe ?? fallback.timeframe ?? null;
+
+      return {
+        key,
+        label,
+        timeframe: timeframeValue ?? 'n/a',
+        candleCount: candles.length,
+        serialized: candles.length ? JSON.stringify(candles, null, 2) : '[]',
+        order: orderMap.has(key) ? orderMap.get(key) : 99,
+      };
+    })
+    .sort((a, b) => a.order - b.order)
+    .map(({ order, ...rest }) => rest);
+});
 
 function formatDateInput(date) {
   return date.toISOString().slice(0, 10);
@@ -779,6 +1012,236 @@ select:focus {
 
 .card-content .placeholder {
   color: #94a3b8;
+}
+
+.aftershock {
+  background: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.aftershock h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.aftershock-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.aftershock-summary {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.aftershock-guidance {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: #eef2ff;
+  color: #312e81;
+  font-weight: 500;
+}
+
+.aftershock-fib {
+  margin-top: 1.5rem;
+}
+
+.aftershock-fib h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  color: #111827;
+}
+
+.aftershock-fib ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fib-level {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+}
+
+.fib-label {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.fib-price {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: #1e293b;
+}
+
+.fib-status {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.fib-status--valid {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+}
+
+.fib-status--invalid {
+  background: rgba(239, 68, 68, 0.15);
+  color: #b91c1c;
+}
+
+.fib-status--unknown {
+  background: rgba(148, 163, 184, 0.15);
+  color: #475569;
+}
+
+.summary-item {
+  background: #eef2ff;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.summary-label {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  color: #4338ca;
+  font-weight: 700;
+}
+
+.summary-value {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: #1e1b4b;
+}
+
+.summary-value.verdict {
+  text-transform: uppercase;
+}
+
+.aftershock-reasons h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+  color: #1f2937;
+}
+
+.aftershock-reasons ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.aftershock-ohlcv {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.aftershock-ohlcv-list {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.aftershock-ohlcv-card {
+  background: #f8fafc;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+}
+
+.aftershock-ohlcv-card h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.aftershock-ohlcv-meta {
+  margin: 0.25rem 0 0;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.aftershock-ohlcv-card details {
+  background: white;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.aftershock-ohlcv-card pre {
+  background: transparent;
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.75rem;
+}
+
+.aftershock-reasons li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.reason-tag {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #4338ca;
+  background: rgba(67, 56, 202, 0.1);
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+}
+
+.reason-detail {
+  color: #1f2937;
+}
+
+.aftershock-evidence summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #4338ca;
+}
+
+.aftershock-evidence pre {
+  margin-top: 0.75rem;
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
 }
 
 @media (min-width: 900px) {

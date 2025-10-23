@@ -44,6 +44,8 @@
           </label>
         </div>
 
+        <p v-if="dateError" class="error parameters-error" aria-live="polite">{{ dateError }}</p>
+
         <div class="parameters-thresholds">
           <label class="control-label" for="minLiquidity">
             Minimum liquidity (USD)
@@ -155,29 +157,6 @@
       <p v-else class="placeholder">Submit a token address to view token details.</p>
     </section>
 
-    <section class="ohlcv">
-      <h2>OHLCV data</h2>
-
-      <p v-if="dateError" class="error">{{ dateError }}</p>
-
-      <div class="timeframes">
-        <article v-for="config in timeframeConfigs" :key="config.id" class="timeframe-card">
-          <div class="timeframe-header">
-            <span class="timeframe-title">{{ config.label }}</span>
-            <span class="timeframe-setting">Timeframe: {{ config.timeframe }}</span>
-          </div>
-
-          <div class="card-content">
-            <p v-if="!pairAddress" class="placeholder">Fetch a pair address to load OHLCV data.</p>
-            <p v-else-if="config.loading" class="placeholder">Loading…</p>
-            <p v-else-if="config.error" class="error">{{ config.error }}</p>
-            <pre v-else-if="config.data">{{ JSON.stringify(config.data, null, 2) }}</pre>
-            <p v-else class="placeholder">Adjust the settings to load data.</p>
-          </div>
-        </article>
-      </div>
-    </section>
-
     <section class="aftershock" aria-live="polite">
       <h2>Aftershock strategy assessment</h2>
 
@@ -224,29 +203,6 @@
             </li>
           </ul>
         </div>
-
-        <div v-if="aftershockOhlcvSources.length" class="aftershock-ohlcv">
-          <h3>OHLCV inputs used in analysis</h3>
-          <div class="aftershock-ohlcv-list">
-            <article v-for="source in aftershockOhlcvSources" :key="source.key" class="aftershock-ohlcv-card">
-              <header>
-                <h4>{{ source.label }}</h4>
-                <p class="aftershock-ohlcv-meta">
-                  {{ source.candleCount }} candles · timeframe setting: {{ source.timeframe || 'n/a' }}
-                </p>
-              </header>
-              <details>
-                <summary>Show candles</summary>
-                <pre>{{ source.serialized }}</pre>
-              </details>
-            </article>
-          </div>
-        </div>
-
-        <details class="aftershock-evidence">
-          <summary>Show evidence</summary>
-          <pre>{{ formattedAftershockEvidence }}</pre>
-        </details>
       </div>
     </section>
   </main>
@@ -589,14 +545,6 @@ const aftershockFibLevels = computed(() => {
   });
 });
 
-const formattedAftershockEvidence = computed(() => {
-  const evidence = aftershockAnalysis.value?.evidence;
-  if (!evidence || Object.keys(evidence).length === 0) {
-    return 'No evidence available.';
-  }
-  return JSON.stringify(evidence, null, 2);
-});
-
 const timeframeOptions = [
   '1s',
   '10s',
@@ -633,60 +581,6 @@ const aftershockDrawGuidance = computed(() => {
   const timeframeLabel = impulseSource.label ?? 'Shortest timeframe';
   const timeframeSetting = impulseSource.timeframe ?? 'selected interval';
   return `Draw Fibonacci levels on the ${timeframeLabel.toLowerCase()} (${timeframeSetting}) chart — this is the dataset used to detect the impulse.`;
-});
-
-const aftershockOhlcvSources = computed(() => {
-  const evidence = aftershockAnalysis.value?.evidence;
-  const ohlcv = evidence?.ohlcv;
-  if (!ohlcv || typeof ohlcv !== 'object') {
-    return [];
-  }
-
-  const configSnapshot = timeframeConfigs.value ?? [];
-  const fallbackMeta = {
-    short: configSnapshot[0] ?? {},
-    '10m': configSnapshot[0] ?? {},
-    medium: configSnapshot[1] ?? {},
-    '30m': configSnapshot[1] ?? {},
-    long: configSnapshot[2] ?? {},
-    '1h': configSnapshot[2] ?? {},
-  };
-
-  const orderMap = new Map([
-    ['short', 0],
-    ['10m', 0],
-    ['medium', 1],
-    ['30m', 1],
-    ['long', 2],
-    ['1h', 2],
-  ]);
-
-  const labelFallback = (key) => {
-    if (key === 'short' || key === '10m') return 'Shortest timeframe';
-    if (key === 'medium' || key === '30m') return 'Medium timeframe';
-    if (key === 'long' || key === '1h') return 'Longest timeframe';
-    return key;
-  };
-
-  return Object.entries(ohlcv)
-    .map(([key, value]) => {
-      const entry = Array.isArray(value) ? { candles: value } : value ?? {};
-      const candles = Array.isArray(entry.candles) ? entry.candles : Array.isArray(value) ? value : [];
-      const fallback = fallbackMeta[key] ?? {};
-      const label = entry.label ?? fallback.label ?? labelFallback(key);
-      const timeframeValue = entry.timeframe ?? fallback.timeframe ?? null;
-
-      return {
-        key,
-        label,
-        timeframe: timeframeValue ?? 'n/a',
-        candleCount: candles.length,
-        serialized: candles.length ? JSON.stringify(candles, null, 2) : '[]',
-        order: orderMap.has(key) ? orderMap.get(key) : 99,
-      };
-    })
-    .sort((a, b) => a.order - b.order)
-    .map(({ order, ...rest }) => rest);
 });
 
 function formatDateInput(date) {
@@ -946,6 +840,11 @@ header {
   gap: 0.4rem;
 }
 
+.parameters-error {
+  margin: 0;
+  font-weight: 600;
+}
+
 label {
   font-weight: 600;
   color: #0f172a;
@@ -1061,90 +960,12 @@ button:not(:disabled):hover {
   color: #0f172a;
 }
 
-.ohlcv {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.ohlcv h2 {
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #111827;
-}
-
 .control-label {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   font-weight: 600;
   color: #0f172a;
-}
-
-select {
-  padding: 0.75rem 1rem;
-  border: 1px solid #cbd5f5;
-  border-radius: 0.75rem;
-  font-size: 1rem;
-  transition: border-color 0.2s ease;
-  background-color: white;
-}
-
-select:focus {
-  outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
-}
-
-.timeframes {
-  display: grid;
-  gap: 1.5rem;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-}
-
-.timeframe-card {
-  background: white;
-  border-radius: 1rem;
-  padding: 1.5rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.timeframe-header {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.timeframe-title {
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.timeframe-setting {
-  font-size: 0.9rem;
-  color: #475569;
-}
-
-.card-content {
-  flex: 1;
-}
-
-.card-content pre {
-  background: #0f172a;
-  color: #f8fafc;
-  padding: 1rem;
-  border-radius: 0.75rem;
-  overflow-x: auto;
-  font-size: 0.85rem;
-  max-height: 320px;
-}
-
-.card-content .placeholder {
-  color: #94a3b8;
 }
 
 .aftershock {
@@ -1289,53 +1110,6 @@ select:focus {
   gap: 0.75rem;
 }
 
-.aftershock-ohlcv {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.aftershock-ohlcv-list {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-}
-
-.aftershock-ohlcv-card {
-  background: #f8fafc;
-  border-radius: 0.75rem;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
-}
-
-.aftershock-ohlcv-card h4 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.aftershock-ohlcv-meta {
-  margin: 0.25rem 0 0;
-  color: #475569;
-  font-size: 0.9rem;
-}
-
-.aftershock-ohlcv-card details {
-  background: white;
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
-}
-
-.aftershock-ohlcv-card pre {
-  background: transparent;
-  margin: 0;
-  max-height: 200px;
-  overflow: auto;
-  font-size: 0.75rem;
-}
-
 .aftershock-reasons li {
   display: flex;
   flex-wrap: wrap;
@@ -1361,28 +1135,18 @@ select:focus {
   color: #1f2937;
 }
 
-.aftershock-evidence summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: #4338ca;
-}
-
-.aftershock-evidence pre {
-  margin-top: 0.75rem;
-  background: #0f172a;
-  color: #f8fafc;
-  padding: 1rem;
+select {
+  padding: 0.75rem 1rem;
+  border: 1px solid #cbd5f5;
   border-radius: 0.75rem;
-  overflow-x: auto;
-  font-size: 0.85rem;
+  font-size: 1rem;
+  transition: border-color 0.2s ease;
+  background-color: white;
 }
 
-@media (min-width: 900px) {
-  .timeframe-header {
-    flex-direction: row;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 1rem;
-  }
+select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
 }
 </style>

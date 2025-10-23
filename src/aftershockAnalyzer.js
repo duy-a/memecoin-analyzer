@@ -29,8 +29,8 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   const holders = Number.isFinite(holdersRaw) ? holdersRaw : 0;
   const liquidity = Number.isFinite(liquidityRaw) ? liquidityRaw : 0;
 
-  const ohlcv10m = extractResult(configs[0]);
-  const ohlcv30m = extractResult(configs[1]);
+  const ohlcv1m = extractResult(configs[0]);
+  const ohlcv5m = extractResult(configs[1]);
   const ohlcv1h = extractResult(configs[2]);
 
   const timeframeMeta = buildTimeframeMeta(configs, [
@@ -47,13 +47,13 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
     change24h: change24hRaw,
     thresholds: resolvedThresholds,
     ohlcv: {
-      short: { ...timeframeMeta.short, candles: ohlcv10m },
-      medium: { ...timeframeMeta.medium, candles: ohlcv30m },
+      short: { ...timeframeMeta.short, candles: ohlcv1m },
+      medium: { ...timeframeMeta.medium, candles: ohlcv5m },
       long: { ...timeframeMeta.long, candles: ohlcv1h },
     },
   };
 
-  if (!ohlcv10m.length || !ohlcv30m.length || !ohlcv1h.length) {
+  if (!ohlcv1m.length || !ohlcv5m.length || !ohlcv1h.length) {
     const missingDataReasons = [
       {
         tag: 'DATA',
@@ -226,8 +226,8 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
     );
   }
 
-  const trendShort = trend(ohlcv10m);
-  const trendMid = trend(ohlcv30m);
+  const trendShort = trend(ohlcv1m);
+  const trendMid = trend(ohlcv5m);
   const trendLong = trend(ohlcv1h);
   const upCount = [trendShort, trendMid, trendLong].filter((value) => value === 'up').length;
   let mtf = 'low';
@@ -244,12 +244,12 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   }
   addReason(
     `MTF_${mtf.toUpperCase()}`,
-    `Trends: 10m=${trendShort}, 30m=${trendMid}, 1h=${trendLong}`,
+    `Trends: 1m=${trendShort}, 5m=${trendMid}, 1h=${trendLong}`,
     mtfPoints,
     mtfMaxPoints,
   );
 
-  const reaction = recentReaction(ohlcv10m, fib);
+  const reaction = recentReaction(ohlcv1m, fib);
   if (reaction.ok) {
     score += 10;
     addReason('REACTION_STRONG', reaction.detail, 10, 10);

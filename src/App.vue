@@ -8,6 +8,43 @@
     </header>
 
     <form class="lookup" @submit.prevent="fetchPairAddress">
+      <section class="parameters" aria-labelledby="parameters-heading">
+        <h2 id="parameters-heading">Parameters</h2>
+
+        <div class="parameters-dates">
+          <label class="control-label" for="fromDate">
+            From date
+            <input
+              id="fromDate"
+              type="date"
+              v-model="fromDateInput"
+              :max="toDateInput"
+            />
+          </label>
+
+          <label class="control-label" for="toDate">
+            To date
+            <input id="toDate" type="date" v-model="toDateInput" :min="fromDateInput" />
+          </label>
+        </div>
+
+        <div class="parameters-timeframes">
+          <label
+            v-for="config in timeframeConfigs"
+            :key="config.id"
+            class="control-label parameter-timeframe"
+            :for="`timeframe-${config.id}`"
+          >
+            {{ config.label }}
+            <select :id="`timeframe-${config.id}`" v-model="config.timeframe">
+              <option v-for="option in timeframeOptions" :key="option" :value="option">
+                {{ option }}
+              </option>
+            </select>
+          </label>
+        </div>
+      </section>
+
       <label for="tokenAddress">Token address</label>
       <input
         id="tokenAddress"
@@ -20,18 +57,17 @@
       <button type="submit" :disabled="loading || !tokenAddress">
         {{ loading ? 'Fetching…' : 'Get pair address' }}
       </button>
-    </form>
 
-    <section class="status" aria-live="polite">
-      <p v-if="!hasApiKey" class="error">
+      <p v-if="!hasApiKey" class="error status-message" aria-live="polite">
         Missing Moralis API key. Set <code>VITE_MORALIS_API_KEY</code> in your environment to enable requests.
       </p>
-      <p v-else-if="errorMessage" class="error">{{ errorMessage }}</p>
-      <p v-else-if="pairAddress" class="result">
-        Pair address: <span class="value">{{ pairAddress }}</span>
+      <p v-else-if="errorMessage" class="error status-message" aria-live="polite">
+        {{ errorMessage }}
       </p>
-      <p v-else class="placeholder">Submit a token address to fetch its pair address.</p>
-    </section>
+      <p v-else-if="!pairAddress" class="placeholder status-message" aria-live="polite">
+        Submit a token address to analyze market data.
+      </p>
+    </form>
 
     <section class="token-overview" aria-live="polite">
       <h2>Token overview</h2>
@@ -73,37 +109,13 @@
     <section class="ohlcv">
       <h2>OHLCV data</h2>
 
-      <div class="controls">
-        <label class="control-label" for="fromDate">
-          From date
-          <input
-            id="fromDate"
-            type="date"
-            v-model="fromDateInput"
-            :max="toDateInput"
-          />
-        </label>
-
-        <label class="control-label" for="toDate">
-          To date
-          <input id="toDate" type="date" v-model="toDateInput" :min="fromDateInput" />
-        </label>
-      </div>
-
       <p v-if="dateError" class="error">{{ dateError }}</p>
 
       <div class="timeframes">
         <article v-for="config in timeframeConfigs" :key="config.id" class="timeframe-card">
           <div class="timeframe-header">
             <span class="timeframe-title">{{ config.label }}</span>
-            <label class="control-label" :for="`timeframe-${config.id}`">
-              Timeframe
-              <select :id="`timeframe-${config.id}`" v-model="config.timeframe">
-                <option v-for="option in timeframeOptions" :key="option" :value="option">
-                  {{ option }}
-                </option>
-              </select>
-            </label>
+            <span class="timeframe-setting">Timeframe: {{ config.timeframe }}</span>
           </div>
 
           <div class="card-content">
@@ -804,6 +816,39 @@ header {
   gap: 0.75rem;
 }
 
+.parameters {
+  background: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.parameters h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.parameters-dates {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.parameters-timeframes {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.parameter-timeframe {
+  gap: 0.4rem;
+}
+
 label {
   font-weight: 600;
   color: #0f172a;
@@ -844,11 +889,8 @@ button:not(:disabled):hover {
   transform: translateY(-1px);
 }
 
-.status {
-  background: white;
-  border-radius: 1rem;
-  padding: 1.5rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+.status-message {
+  margin: 0;
 }
 
 .token-overview {
@@ -922,11 +964,6 @@ button:not(:disabled):hover {
   color: #0f172a;
 }
 
-.value {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  word-break: break-all;
-}
-
 .ohlcv {
   display: flex;
   flex-direction: column;
@@ -938,12 +975,6 @@ button:not(:disabled):hover {
   font-size: 1.5rem;
   font-weight: 700;
   color: #111827;
-}
-
-.controls {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .control-label {
@@ -994,6 +1025,11 @@ select:focus {
 .timeframe-title {
   font-weight: 600;
   color: #0f172a;
+}
+
+.timeframe-setting {
+  font-size: 0.9rem;
+  color: #475569;
 }
 
 .card-content {

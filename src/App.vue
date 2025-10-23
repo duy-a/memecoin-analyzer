@@ -8,6 +8,94 @@
     </header>
 
     <form class="lookup" @submit.prevent="fetchPairAddress">
+      <section class="parameters" aria-labelledby="parameters-heading">
+        <h2 id="parameters-heading">Parameters</h2>
+
+        <div class="parameters-dates">
+          <label class="control-label" for="fromDate">
+            From date
+            <input
+              id="fromDate"
+              type="date"
+              v-model="fromDateInput"
+              :max="toDateInput"
+            />
+          </label>
+
+          <label class="control-label" for="toDate">
+            To date
+            <input id="toDate" type="date" v-model="toDateInput" :min="fromDateInput" />
+          </label>
+        </div>
+
+        <div class="parameters-timeframes">
+          <label
+            v-for="config in timeframeConfigs"
+            :key="config.id"
+            class="control-label parameter-timeframe"
+            :for="`timeframe-${config.id}`"
+          >
+            {{ config.label }}
+            <select :id="`timeframe-${config.id}`" v-model="config.timeframe">
+              <option v-for="option in timeframeOptions" :key="option" :value="option">
+                {{ option }}
+              </option>
+            </select>
+          </label>
+        </div>
+
+        <p v-if="dateError" class="error parameters-error" aria-live="polite">{{ dateError }}</p>
+
+        <div class="parameters-thresholds">
+          <label class="control-label" for="minLiquidity">
+            Minimum liquidity (USD)
+            <input
+              id="minLiquidity"
+              v-model="minLiquidityInput"
+              type="number"
+              min="0"
+              step="1000"
+              inputmode="decimal"
+            />
+          </label>
+
+          <label class="control-label" for="minVolume">
+            Minimum 24h volume (USD)
+            <input
+              id="minVolume"
+              v-model="minVolumeInput"
+              type="number"
+              min="0"
+              step="1000"
+              inputmode="decimal"
+            />
+          </label>
+
+          <label class="control-label" for="minPriceChange">
+            Minimum 24h price change (%)
+            <input
+              id="minPriceChange"
+              v-model="minPriceChangeInput"
+              type="number"
+              step="0.1"
+              inputmode="decimal"
+            />
+          </label>
+
+          <label class="control-label" for="minHolders">
+            Minimum holders
+            <input
+              id="minHolders"
+              v-model="minHoldersInput"
+              type="number"
+              min="0"
+              step="1"
+              inputmode="numeric"
+            />
+          </label>
+        </div>
+      </section>
+
       <label for="tokenAddress">Token address</label>
       <input
         id="tokenAddress"
@@ -20,18 +108,17 @@
       <button type="submit" :disabled="loading || !tokenAddress">
         {{ loading ? 'Fetching…' : 'Get pair address' }}
       </button>
-    </form>
 
-    <section class="status" aria-live="polite">
-      <p v-if="!hasApiKey" class="error">
+      <p v-if="!hasApiKey" class="error status-message" aria-live="polite">
         Missing Moralis API key. Set <code>VITE_MORALIS_API_KEY</code> in your environment to enable requests.
       </p>
-      <p v-else-if="errorMessage" class="error">{{ errorMessage }}</p>
-      <p v-else-if="pairAddress" class="result">
-        Pair address: <span class="value">{{ pairAddress }}</span>
+      <p v-else-if="errorMessage" class="error status-message" aria-live="polite">
+        {{ errorMessage }}
       </p>
-      <p v-else class="placeholder">Submit a token address to fetch its pair address.</p>
-    </section>
+      <p v-else-if="!pairAddress" class="placeholder status-message" aria-live="polite">
+        Submit a token address to analyze market data.
+      </p>
+    </form>
 
     <section class="token-overview" aria-live="polite">
       <h2>Token overview</h2>
@@ -68,53 +155,6 @@
       </div>
 
       <p v-else class="placeholder">Submit a token address to view token details.</p>
-    </section>
-
-    <section class="ohlcv">
-      <h2>OHLCV data</h2>
-
-      <div class="controls">
-        <label class="control-label" for="fromDate">
-          From date
-          <input
-            id="fromDate"
-            type="date"
-            v-model="fromDateInput"
-            :max="toDateInput"
-          />
-        </label>
-
-        <label class="control-label" for="toDate">
-          To date
-          <input id="toDate" type="date" v-model="toDateInput" :min="fromDateInput" />
-        </label>
-      </div>
-
-      <p v-if="dateError" class="error">{{ dateError }}</p>
-
-      <div class="timeframes">
-        <article v-for="config in timeframeConfigs" :key="config.id" class="timeframe-card">
-          <div class="timeframe-header">
-            <span class="timeframe-title">{{ config.label }}</span>
-            <label class="control-label" :for="`timeframe-${config.id}`">
-              Timeframe
-              <select :id="`timeframe-${config.id}`" v-model="config.timeframe">
-                <option v-for="option in timeframeOptions" :key="option" :value="option">
-                  {{ option }}
-                </option>
-              </select>
-            </label>
-          </div>
-
-          <div class="card-content">
-            <p v-if="!pairAddress" class="placeholder">Fetch a pair address to load OHLCV data.</p>
-            <p v-else-if="config.loading" class="placeholder">Loading…</p>
-            <p v-else-if="config.error" class="error">{{ config.error }}</p>
-            <pre v-else-if="config.data">{{ JSON.stringify(config.data, null, 2) }}</pre>
-            <p v-else class="placeholder">Adjust the settings to load data.</p>
-          </div>
-        </article>
-      </div>
     </section>
 
     <section class="aftershock" aria-live="polite">
@@ -155,37 +195,26 @@
         </div>
 
         <div v-if="aftershockAnalysis.reasons?.length" class="aftershock-reasons">
-          <h3>Key factors</h3>
+          <h3>Setup score breakdown</h3>
           <ul>
-            <li v-for="reason in aftershockAnalysis.reasons" :key="`${reason.tag}-${reason.detail}`">
-              <span class="reason-tag">{{ reason.tag }}</span>
-              <span class="reason-detail">{{ reason.detail }}</span>
+            <li
+              v-for="reason in aftershockAnalysis.reasons"
+              :key="`${reason.tag}-${reason.detail}`"
+              class="reason-item"
+            >
+              <div class="reason-header">
+                <span
+                  v-if="getReasonScoreLabel(reason)"
+                  class="reason-score"
+                >
+                  {{ getReasonScoreLabel(reason) }}
+                </span>
+                <span class="reason-title">{{ getReasonTitle(reason.tag) }}</span>
+              </div>
+              <p class="reason-detail">{{ reason.detail }}</p>
             </li>
           </ul>
         </div>
-
-        <div v-if="aftershockOhlcvSources.length" class="aftershock-ohlcv">
-          <h3>OHLCV inputs used in analysis</h3>
-          <div class="aftershock-ohlcv-list">
-            <article v-for="source in aftershockOhlcvSources" :key="source.key" class="aftershock-ohlcv-card">
-              <header>
-                <h4>{{ source.label }}</h4>
-                <p class="aftershock-ohlcv-meta">
-                  {{ source.candleCount }} candles · timeframe setting: {{ source.timeframe || 'n/a' }}
-                </p>
-              </header>
-              <details>
-                <summary>Show candles</summary>
-                <pre>{{ source.serialized }}</pre>
-              </details>
-            </article>
-          </div>
-        </div>
-
-        <details class="aftershock-evidence">
-          <summary>Show evidence</summary>
-          <pre>{{ formattedAftershockEvidence }}</pre>
-        </details>
       </div>
     </section>
   </main>
@@ -199,6 +228,18 @@ const tokenAddress = ref('');
 const pairAddress = ref('');
 const errorMessage = ref('');
 const loading = ref(false);
+
+const defaultAftershockThresholds = {
+  minLiquidity: 50000,
+  minVolume: 100000,
+  minPriceChange: 30,
+  minHolders: 50,
+};
+
+const minLiquidityInput = ref(String(defaultAftershockThresholds.minLiquidity));
+const minVolumeInput = ref(String(defaultAftershockThresholds.minVolume));
+const minPriceChangeInput = ref(String(defaultAftershockThresholds.minPriceChange));
+const minHoldersInput = ref(String(defaultAftershockThresholds.minHolders));
 
 const apiKey = import.meta.env.VITE_MORALIS_API_KEY;
 const hasApiKey = computed(() => Boolean(apiKey));
@@ -283,12 +324,38 @@ function formatPercentage(value) {
   return `${sign}${formatted}%`;
 }
 
+function normalizeThresholdInput(value, fallback) {
+  if (value === '' || value === null || value === undefined) {
+    return fallback;
+  }
+
+  const normalized = typeof value === 'number' ? value : Number(value);
+  if (Number.isFinite(normalized) && normalized >= 0) {
+    return normalized;
+  }
+
+  return fallback;
+}
+
 const formattedTokenOverview = computed(() => ({
   price: formatCurrency(tokenOverview.value.price),
   volume24h: formatCurrency(tokenOverview.value.volume24h),
   priceChange24h: formatPercentage(tokenOverview.value.priceChange24h),
   holders: formatNumber(tokenOverview.value.holders),
   dexLiquidity: formatCurrency(tokenOverview.value.dexLiquidity),
+}));
+
+const aftershockThresholds = computed(() => ({
+  minLiquidity: normalizeThresholdInput(
+    minLiquidityInput.value,
+    defaultAftershockThresholds.minLiquidity,
+  ),
+  minVolume: normalizeThresholdInput(minVolumeInput.value, defaultAftershockThresholds.minVolume),
+  minPriceChange: normalizeThresholdInput(
+    minPriceChangeInput.value,
+    defaultAftershockThresholds.minPriceChange,
+  ),
+  minHolders: normalizeThresholdInput(minHoldersInput.value, defaultAftershockThresholds.minHolders),
 }));
 
 async function fetchDexscreenerOverview(address) {
@@ -428,7 +495,11 @@ const timeframeLoading = computed(() =>
 
 const aftershockAnalysis = computed(() => {
   try {
-    return analyzeTokenAftershock(tokenOverview, timeframeConfigs.value);
+    return analyzeTokenAftershock(
+      tokenOverview,
+      timeframeConfigs.value,
+      aftershockThresholds.value,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown analysis error';
     return {
@@ -440,6 +511,50 @@ const aftershockAnalysis = computed(() => {
     };
   }
 });
+
+const reasonTitleMap = {
+  DATA: 'Data availability',
+  LIQ_LOW: 'Liquidity readiness',
+  LIQ_OK: 'Liquidity readiness',
+  VOL_LOW: 'Volume strength',
+  VOL_OK: 'Volume strength',
+  IMPULSE_WEAK: '24h price impulse',
+  IMPULSE_STRONG: '24h price impulse',
+  HOLDERS_LOW: 'Holder base',
+  HOLDERS_OK: 'Holder base',
+  IMPULSE_RANGE_INVALID: 'Swing range context',
+  IMPULSE_RANGE: 'Swing range context',
+  ZONE_OK: 'Fib retracement zone',
+  ZONE_NONE: 'Fib retracement zone',
+  MTF_HIGH: 'Multi-timeframe trend alignment',
+  MTF_MEDIUM: 'Multi-timeframe trend alignment',
+  MTF_LOW: 'Multi-timeframe trend alignment',
+  REACTION_STRONG: 'Fib reaction quality',
+  REACTION_WEAK: 'Fib reaction quality',
+  REACTION_FAIL: 'Fib reaction quality',
+  ANALYSIS_ERROR: 'Analysis error',
+};
+
+function getReasonTitle(tag) {
+  return reasonTitleMap[tag] ?? 'Assessment note';
+}
+
+function getReasonScoreLabel(reason) {
+  if (!reason || typeof reason.points !== 'number') {
+    return '';
+  }
+
+  const earned = reason.points;
+  const max = typeof reason.maxPoints === 'number' ? reason.maxPoints : null;
+  const sign = earned > 0 ? '+' : earned < 0 ? '-' : '';
+  const absolute = Math.abs(earned);
+
+  if (max !== null && Number.isFinite(max)) {
+    return `${sign}${absolute} / ${max} pts`;
+  }
+
+  return `${sign}${absolute} pts`;
+}
 
 const aftershockFibLevels = computed(() => {
   const levels = aftershockAnalysis.value?.evidence?.fibLevels;
@@ -486,14 +601,6 @@ const aftershockFibLevels = computed(() => {
   });
 });
 
-const formattedAftershockEvidence = computed(() => {
-  const evidence = aftershockAnalysis.value?.evidence;
-  if (!evidence || Object.keys(evidence).length === 0) {
-    return 'No evidence available.';
-  }
-  return JSON.stringify(evidence, null, 2);
-});
-
 const timeframeOptions = [
   '1s',
   '10s',
@@ -530,60 +637,6 @@ const aftershockDrawGuidance = computed(() => {
   const timeframeLabel = impulseSource.label ?? 'Shortest timeframe';
   const timeframeSetting = impulseSource.timeframe ?? 'selected interval';
   return `Draw Fibonacci levels on the ${timeframeLabel.toLowerCase()} (${timeframeSetting}) chart — this is the dataset used to detect the impulse.`;
-});
-
-const aftershockOhlcvSources = computed(() => {
-  const evidence = aftershockAnalysis.value?.evidence;
-  const ohlcv = evidence?.ohlcv;
-  if (!ohlcv || typeof ohlcv !== 'object') {
-    return [];
-  }
-
-  const configSnapshot = timeframeConfigs.value ?? [];
-  const fallbackMeta = {
-    short: configSnapshot[0] ?? {},
-    '10m': configSnapshot[0] ?? {},
-    medium: configSnapshot[1] ?? {},
-    '30m': configSnapshot[1] ?? {},
-    long: configSnapshot[2] ?? {},
-    '1h': configSnapshot[2] ?? {},
-  };
-
-  const orderMap = new Map([
-    ['short', 0],
-    ['10m', 0],
-    ['medium', 1],
-    ['30m', 1],
-    ['long', 2],
-    ['1h', 2],
-  ]);
-
-  const labelFallback = (key) => {
-    if (key === 'short' || key === '10m') return 'Shortest timeframe';
-    if (key === 'medium' || key === '30m') return 'Medium timeframe';
-    if (key === 'long' || key === '1h') return 'Longest timeframe';
-    return key;
-  };
-
-  return Object.entries(ohlcv)
-    .map(([key, value]) => {
-      const entry = Array.isArray(value) ? { candles: value } : value ?? {};
-      const candles = Array.isArray(entry.candles) ? entry.candles : Array.isArray(value) ? value : [];
-      const fallback = fallbackMeta[key] ?? {};
-      const label = entry.label ?? fallback.label ?? labelFallback(key);
-      const timeframeValue = entry.timeframe ?? fallback.timeframe ?? null;
-
-      return {
-        key,
-        label,
-        timeframe: timeframeValue ?? 'n/a',
-        candleCount: candles.length,
-        serialized: candles.length ? JSON.stringify(candles, null, 2) : '[]',
-        order: orderMap.has(key) ? orderMap.get(key) : 99,
-      };
-    })
-    .sort((a, b) => a.order - b.order)
-    .map(({ order, ...rest }) => rest);
 });
 
 function formatDateInput(date) {
@@ -804,6 +857,50 @@ header {
   gap: 0.75rem;
 }
 
+.parameters {
+  background: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.parameters h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.parameters-dates {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.parameters-timeframes {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.parameters-thresholds {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.parameter-timeframe {
+  gap: 0.4rem;
+}
+
+.parameters-error {
+  margin: 0;
+  font-weight: 600;
+}
+
 label {
   font-weight: 600;
   color: #0f172a;
@@ -844,11 +941,8 @@ button:not(:disabled):hover {
   transform: translateY(-1px);
 }
 
-.status {
-  background: white;
-  border-radius: 1rem;
-  padding: 1.5rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+.status-message {
+  margin: 0;
 }
 
 .token-overview {
@@ -922,96 +1016,12 @@ button:not(:disabled):hover {
   color: #0f172a;
 }
 
-.value {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  word-break: break-all;
-}
-
-.ohlcv {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.ohlcv h2 {
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #111827;
-}
-
-.controls {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-}
-
 .control-label {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   font-weight: 600;
   color: #0f172a;
-}
-
-select {
-  padding: 0.75rem 1rem;
-  border: 1px solid #cbd5f5;
-  border-radius: 0.75rem;
-  font-size: 1rem;
-  transition: border-color 0.2s ease;
-  background-color: white;
-}
-
-select:focus {
-  outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
-}
-
-.timeframes {
-  display: grid;
-  gap: 1.5rem;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-}
-
-.timeframe-card {
-  background: white;
-  border-radius: 1rem;
-  padding: 1.5rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.timeframe-header {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.timeframe-title {
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.card-content {
-  flex: 1;
-}
-
-.card-content pre {
-  background: #0f172a;
-  color: #f8fafc;
-  padding: 1rem;
-  border-radius: 0.75rem;
-  overflow-x: auto;
-  font-size: 0.85rem;
-  max-height: 320px;
-}
-
-.card-content .placeholder {
-  color: #94a3b8;
 }
 
 .aftershock {
@@ -1156,100 +1166,55 @@ select:focus {
   gap: 0.75rem;
 }
 
-.aftershock-ohlcv {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.aftershock-ohlcv-list {
+.reason-item {
   display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-}
-
-.aftershock-ohlcv-card {
-  background: #f8fafc;
-  border-radius: 0.75rem;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
-}
-
-.aftershock-ohlcv-card h4 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.aftershock-ohlcv-meta {
-  margin: 0.25rem 0 0;
-  color: #475569;
-  font-size: 0.9rem;
-}
-
-.aftershock-ohlcv-card details {
-  background: white;
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
-}
-
-.aftershock-ohlcv-card pre {
-  background: transparent;
-  margin: 0;
-  max-height: 200px;
-  overflow: auto;
-  font-size: 0.75rem;
-}
-
-.aftershock-reasons li {
-  display: flex;
-  flex-wrap: wrap;
   gap: 0.5rem;
-  align-items: baseline;
-  padding: 0.75rem 1rem;
-  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.85rem;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
 }
 
-.reason-tag {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+.reason-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.reason-score {
   font-size: 0.8rem;
-  font-weight: 600;
-  color: #4338ca;
-  background: rgba(67, 56, 202, 0.1);
-  padding: 0.25rem 0.5rem;
+  font-weight: 700;
+  color: #312e81;
+  background: rgba(99, 102, 241, 0.12);
+  padding: 0.25rem 0.6rem;
   border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.reason-title {
+  font-weight: 600;
+  color: #0f172a;
 }
 
 .reason-detail {
+  margin: 0;
   color: #1f2937;
 }
 
-.aftershock-evidence summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: #4338ca;
-}
-
-.aftershock-evidence pre {
-  margin-top: 0.75rem;
-  background: #0f172a;
-  color: #f8fafc;
-  padding: 1rem;
+select {
+  padding: 0.75rem 1rem;
+  border: 1px solid #cbd5f5;
   border-radius: 0.75rem;
-  overflow-x: auto;
-  font-size: 0.85rem;
+  font-size: 1rem;
+  transition: border-color 0.2s ease;
+  background-color: white;
 }
 
-@media (min-width: 900px) {
-  .timeframe-header {
-    flex-direction: row;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 1rem;
-  }
+select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
 }
 </style>

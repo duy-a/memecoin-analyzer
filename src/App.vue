@@ -43,6 +43,55 @@
             </select>
           </label>
         </div>
+
+        <div class="parameters-thresholds">
+          <label class="control-label" for="minLiquidity">
+            Minimum liquidity (USD)
+            <input
+              id="minLiquidity"
+              v-model="minLiquidityInput"
+              type="number"
+              min="0"
+              step="1000"
+              inputmode="decimal"
+            />
+          </label>
+
+          <label class="control-label" for="minVolume">
+            Minimum 24h volume (USD)
+            <input
+              id="minVolume"
+              v-model="minVolumeInput"
+              type="number"
+              min="0"
+              step="1000"
+              inputmode="decimal"
+            />
+          </label>
+
+          <label class="control-label" for="minPriceChange">
+            Minimum 24h price change (%)
+            <input
+              id="minPriceChange"
+              v-model="minPriceChangeInput"
+              type="number"
+              step="0.1"
+              inputmode="decimal"
+            />
+          </label>
+
+          <label class="control-label" for="minHolders">
+            Minimum holders
+            <input
+              id="minHolders"
+              v-model="minHoldersInput"
+              type="number"
+              min="0"
+              step="1"
+              inputmode="numeric"
+            />
+          </label>
+        </div>
       </section>
 
       <label for="tokenAddress">Token address</label>
@@ -212,6 +261,18 @@ const pairAddress = ref('');
 const errorMessage = ref('');
 const loading = ref(false);
 
+const defaultAftershockThresholds = {
+  minLiquidity: 50000,
+  minVolume: 100000,
+  minPriceChange: 30,
+  minHolders: 50,
+};
+
+const minLiquidityInput = ref(String(defaultAftershockThresholds.minLiquidity));
+const minVolumeInput = ref(String(defaultAftershockThresholds.minVolume));
+const minPriceChangeInput = ref(String(defaultAftershockThresholds.minPriceChange));
+const minHoldersInput = ref(String(defaultAftershockThresholds.minHolders));
+
 const apiKey = import.meta.env.VITE_MORALIS_API_KEY;
 const hasApiKey = computed(() => Boolean(apiKey));
 
@@ -295,12 +356,38 @@ function formatPercentage(value) {
   return `${sign}${formatted}%`;
 }
 
+function normalizeThresholdInput(value, fallback) {
+  if (value === '' || value === null || value === undefined) {
+    return fallback;
+  }
+
+  const normalized = typeof value === 'number' ? value : Number(value);
+  if (Number.isFinite(normalized) && normalized >= 0) {
+    return normalized;
+  }
+
+  return fallback;
+}
+
 const formattedTokenOverview = computed(() => ({
   price: formatCurrency(tokenOverview.value.price),
   volume24h: formatCurrency(tokenOverview.value.volume24h),
   priceChange24h: formatPercentage(tokenOverview.value.priceChange24h),
   holders: formatNumber(tokenOverview.value.holders),
   dexLiquidity: formatCurrency(tokenOverview.value.dexLiquidity),
+}));
+
+const aftershockThresholds = computed(() => ({
+  minLiquidity: normalizeThresholdInput(
+    minLiquidityInput.value,
+    defaultAftershockThresholds.minLiquidity,
+  ),
+  minVolume: normalizeThresholdInput(minVolumeInput.value, defaultAftershockThresholds.minVolume),
+  minPriceChange: normalizeThresholdInput(
+    minPriceChangeInput.value,
+    defaultAftershockThresholds.minPriceChange,
+  ),
+  minHolders: normalizeThresholdInput(minHoldersInput.value, defaultAftershockThresholds.minHolders),
 }));
 
 async function fetchDexscreenerOverview(address) {
@@ -440,7 +527,11 @@ const timeframeLoading = computed(() =>
 
 const aftershockAnalysis = computed(() => {
   try {
-    return analyzeTokenAftershock(tokenOverview, timeframeConfigs.value);
+    return analyzeTokenAftershock(
+      tokenOverview,
+      timeframeConfigs.value,
+      aftershockThresholds.value,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown analysis error';
     return {
@@ -840,6 +931,12 @@ header {
 }
 
 .parameters-timeframes {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.parameters-thresholds {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

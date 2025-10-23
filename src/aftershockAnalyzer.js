@@ -1,11 +1,15 @@
 const MAX_SETUP_SCORE = 75;
+const DEFAULT_THRESHOLDS = {
+  minLiquidity: 50000,
+  minVolume: 100000,
+  minPriceChange: 30,
+  minHolders: 50,
+};
 
-export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
+export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, thresholds = {}) {
   // ===== User-adjustable thresholds =====
-  const minLiquidity = 50000;
-  const minVolume = 100000;
-  const minPriceChange = 30; // percent
-  const minHolders = 50;
+  const resolvedThresholds = resolveThresholds(thresholds);
+  const { minLiquidity, minVolume, minPriceChange, minHolders } = resolvedThresholds;
   const fibSet = [0.702, 0.618, 0.5, 0.382, 0.236];
 
   const overviewRef = tokenOverview?.value ?? tokenOverview ?? {};
@@ -41,6 +45,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
     volume24h: volume24hRaw,
     holders: holdersRaw,
     change24h: change24hRaw,
+    thresholds: resolvedThresholds,
     ohlcv: {
       short: { ...timeframeMeta.short, candles: ohlcv10m },
       medium: { ...timeframeMeta.medium, candles: ohlcv30m },
@@ -335,6 +340,29 @@ function between(value, range) {
   const low = Math.min(min, max);
   const high = Math.max(min, max);
   return value >= low && value <= high;
+}
+
+function resolveThresholds(overrides) {
+  const source = overrides && typeof overrides === 'object' ? overrides : {};
+  return {
+    minLiquidity: coerceThreshold(source.minLiquidity, DEFAULT_THRESHOLDS.minLiquidity),
+    minVolume: coerceThreshold(source.minVolume, DEFAULT_THRESHOLDS.minVolume),
+    minPriceChange: coerceThreshold(source.minPriceChange, DEFAULT_THRESHOLDS.minPriceChange),
+    minHolders: coerceThreshold(source.minHolders, DEFAULT_THRESHOLDS.minHolders),
+  };
+}
+
+function coerceThreshold(value, fallback) {
+  if (value === '' || value === null || value === undefined) {
+    return fallback;
+  }
+
+  const normalized = typeof value === 'number' ? value : Number(value);
+  if (Number.isFinite(normalized) && normalized >= 0) {
+    return normalized;
+  }
+
+  return fallback;
 }
 
 function toNumber(value) {

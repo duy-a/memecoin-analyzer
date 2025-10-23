@@ -17,14 +17,24 @@
     </p>
 
     <section v-if="combinedResponse" class="json-section">
-      <button
-        type="button"
-        class="copy-button"
-        @click="copyJsonToClipboard"
-        :disabled="!formattedJson"
-      >
-        Copy JSON
-      </button>
+      <div class="action-buttons">
+        <button
+          type="button"
+          class="copy-button"
+          @click="copyJsonToClipboard"
+          :disabled="!formattedJson"
+        >
+          Copy JSON
+        </button>
+        <button
+          type="button"
+          class="gpt-button"
+          @click="openGptChat"
+          :disabled="!formattedJson"
+        >
+          OpenGPT Chat
+        </button>
+      </div>
       <p v-if="copyFeedback" class="copy-feedback" aria-live="polite">{{ copyFeedback }}</p>
       <pre class="json-output">{{ formattedJson }}</pre>
     </section>
@@ -46,6 +56,7 @@ const apiKey = import.meta.env.VITE_MORALIS_API_KEY ?? '';
 const hasApiKey = computed(() => Boolean(apiKey));
 
 const timeframeSelections = ['1min', '10min', '1h'];
+const gptChatUrl = 'https://chatgpt.com/g/g-68f9c00f3c9c8191ae2d561e5d564c85-aftershock-agent';
 
 function getDefaultDateRange() {
   const end = new Date();
@@ -239,6 +250,40 @@ async function copyJsonToClipboard() {
   }
 }
 
+async function openGptChat() {
+  if (!formattedJson.value) {
+    return;
+  }
+
+  const prompt = `Please analyze the following token data and provide insights.\n\n${formattedJson.value}`;
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(prompt);
+    } else {
+      copyUsingTextarea(prompt);
+    }
+    copyFeedback.value = 'Prompt copied! Opening GPT chat…';
+  } catch (error) {
+    console.error('Failed to prepare prompt for GPT chat', error);
+    copyFeedback.value = 'Opening GPT chat without copying prompt.';
+  } finally {
+    clearTimeout(copyTimeoutId);
+    copyTimeoutId = setTimeout(() => {
+      copyFeedback.value = '';
+    }, 2000);
+
+    try {
+      const url = new URL(gptChatUrl);
+      url.searchParams.set('q', prompt);
+      window.open(url.toString(), '_blank', 'noopener,noreferrer');
+    } catch (urlError) {
+      console.error('Unable to open GPT chat with prompt parameter', urlError);
+      window.open(gptChatUrl, '_blank', 'noopener,noreferrer');
+    }
+  }
+}
+
 onBeforeUnmount(() => {
   clearTimeout(copyTimeoutId);
 });
@@ -284,7 +329,14 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
 }
 
-.copy-button {
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.copy-button,
+.gpt-button {
   align-self: flex-start;
   background: #1d4ed8;
   color: #f8fafc;
@@ -298,18 +350,30 @@ onBeforeUnmount(() => {
   box-shadow: 0 10px 25px rgba(29, 78, 216, 0.25);
 }
 
-.copy-button:hover:not(:disabled) {
+.copy-button:hover:not(:disabled),
+.gpt-button:hover:not(:disabled) {
   background: #1e40af;
 }
 
-.copy-button:active:not(:disabled) {
+.copy-button:active:not(:disabled),
+.gpt-button:active:not(:disabled) {
   transform: translateY(1px);
 }
 
-.copy-button:disabled {
+.copy-button:disabled,
+.gpt-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+.gpt-button {
+  background: #0f766e;
+  box-shadow: 0 10px 25px rgba(15, 118, 110, 0.25);
+}
+
+.gpt-button:hover:not(:disabled) {
+  background: #0d5d57;
 }
 
 .copy-feedback {

@@ -54,18 +54,24 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   };
 
   if (!ohlcv10m.length || !ohlcv30m.length || !ohlcv1h.length) {
+    const missingDataReasons = [
+      {
+        tag: 'DATA',
+        detail: 'Missing timeframe data',
+        points: 0,
+        maxPoints: MAX_SETUP_SCORE,
+      },
+    ];
+    const enhancedReasons = buildScoreExplanations(missingDataReasons);
+    const verdict = 'No Trade';
+    const summaryExplanation = summarizeVerdict(verdict, enhancedReasons);
     return {
-      verdict: 'No Trade',
+      verdict,
+      verdict_summary: summaryExplanation,
       setup_score: 0,
       setup_score_max: MAX_SETUP_SCORE,
-      reasons: [
-        {
-          tag: 'DATA',
-          detail: 'Missing timeframe data',
-          points: 0,
-          maxPoints: MAX_SETUP_SCORE,
-        },
-      ],
+      confidence_score: 0,
+      reasons: enhancedReasons,
       evidence: evidenceBase,
     };
   }
@@ -144,8 +150,10 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
     );
   }
 
-  const highs = ohlcv1h.map((candle) => candle.high);
-  const lows = ohlcv1h.map((candle) => candle.low);
+  const lookback = Math.min(ohlcv1h.length, 200);
+  const longTail = ohlcv1h.slice(-lookback);
+  const highs = longTail.map((candle) => candle.high);
+  const lows = longTail.map((candle) => candle.low);
   const swingHigh = Math.max(...highs);
   const swingLow = Math.min(...lows);
 
@@ -154,11 +162,17 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
       'IMPULSE_RANGE_INVALID',
       'Not enough data to anchor Fibonacci swing on the long timeframe',
     );
+    const enhancedReasons = buildScoreExplanations(reasons);
+    const verdict = 'No Trade';
+    const summaryExplanation = summarizeVerdict(verdict, enhancedReasons);
+    const confidenceScore = Math.round((score / MAX_SETUP_SCORE) * 100);
     return {
-      verdict: 'No Trade',
+      verdict,
+      verdict_summary: summaryExplanation,
       setup_score: score,
       setup_score_max: MAX_SETUP_SCORE,
-      reasons,
+      confidence_score: confidenceScore,
+      reasons: enhancedReasons,
       evidence: {
         ...evidenceBase,
         swingHigh,
@@ -176,7 +190,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   const fib = { '0': swingLow, '1': swingHigh, 0: swingLow, 1: swingHigh };
   const swingRange = swingHigh - swingLow;
   fibSet.forEach((level) => {
-    fib[level] = swingHigh - swingRange * level;
+    fib[level] = swingLow + swingRange * level;
   });
 
   const fibLevels = buildFibLevelDetails(fib, fibSet, price);
@@ -255,11 +269,77 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
     candles: ohlcv1h.length,
   };
 
+  // 1. Explain each scoring reason in human language
+  function buildScoreExplanations(reasonsList) {
+    const explanationMap = {
+      LIQ_OK: 'Liquidity is sufficient to absorb trades and indicates healthy market depth.',
+      LIQ_LOW: 'Liquidity is below the safe minimum, increasing slippage and exit risk.',
+      VOL_OK: 'Strong trading activity confirms interest and easier order execution.',
+      VOL_LOW: '24h volume is too low, meaning limited interest or liquidity rotation.',
+      IMPULSE_STRONG:
+        'The token recently had a strong upward impulse — suitable for Aftershock pullback setups.',
+      IMPULSE_WEAK: 'No strong recent impulse — this reduces rebound probability.',
+      HOLDERS_OK: 'Holder count shows organic adoption and community strength.',
+      HOLDERS_LOW: 'Too few holders — may indicate an illiquid or early-stage token.',
+      ZONE_OK: 'Current price is within the optimal Fibonacci retracement zone for Aftershock entries.',
+      ZONE_NONE: 'Price is outside the valid 0.702–0.236 retracement band — no technical setup.',
+      MTF_HIGH: 'All timeframes (short, medium, long) are aligned upward — strong multi-timeframe confluence.',
+      MTF_MEDIUM:
+        'Two of three timeframes support the upward structure — moderate confluence.',
+      MTF_LOW: 'Trends across timeframes are not aligned — weak or mixed signals.',
+      REACTION_STRONG:
+        'Recent candles show a strong rejection wick near Fibonacci support — strong buying reaction.',
+      REACTION_WEAK: 'Some absorption near Fib support — early signs of buyer defense.',
+      REACTION_FAIL: 'No reaction near Fib support — no visible buyer interest yet.',
+    };
+
+    return reasonsList.map((reason) => ({
+      ...reason,
+      explanation: explanationMap[reason.tag] ?? '',
+    }));
+  }
+
+  // 2. Generate natural-language summary for the overall verdict
+  function summarizeVerdict(verdictText, reasonsList) {
+    const hasStrongImpulse = reasonsList.some((reason) => reason.tag === 'IMPULSE_STRONG');
+    const inFibZone = reasonsList.some((reason) => reason.tag === 'ZONE_OK');
+    const mtfStrong = reasonsList.some((reason) => reason.tag === 'MTF_HIGH');
+    const reaction = reasonsList.find((reason) => reason.tag.startsWith('REACTION_'));
+
+    if (verdictText.includes('Valid High')) {
+      return 'This setup qualifies as a High Probability Aftershock pattern: strong impulse, healthy liquidity, price within Fibonacci correction zone, and aligned trends signal a likely continuation rebound.';
+    }
+
+    if (verdictText.includes('Valid Low')) {
+      return 'This setup has partial confluence: liquidity and volume are healthy, but either trend alignment or Fib reaction is incomplete. It may still offer potential but requires confirmation.';
+    }
+
+    if (verdictText.includes('Avoid')) {
+      const cause = [];
+      if (!hasStrongImpulse) cause.push('no strong impulse');
+      if (!inFibZone) cause.push('price outside correction zone');
+      if (!mtfStrong) cause.push('no trend alignment');
+      if (reaction?.tag === 'REACTION_FAIL') cause.push('no candle reaction near support');
+      return `This token does not currently meet Aftershock criteria — ${cause.join(", ")}. Wait for new impulse and retracement alignment before re-evaluating.`;
+    }
+
+    return 'Insufficient data to determine setup validity.';
+  }
+
+  // Enhance reasons and add summary before returning
+  const enhancedReasons = buildScoreExplanations(reasons);
+  const summaryExplanation = summarizeVerdict(verdict, enhancedReasons);
+
+  // Compute confidence as a percentage of max possible points
+  const confidenceScore = Math.round((score / MAX_SETUP_SCORE) * 100);
+
   return {
     verdict,
+    verdict_summary: summaryExplanation,
     setup_score: score,
     setup_score_max: MAX_SETUP_SCORE,
-    reasons,
+    confidence_score: confidenceScore,
+    reasons: enhancedReasons,
     evidence: {
       ...evidenceBase,
       swingLow,

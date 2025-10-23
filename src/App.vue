@@ -178,8 +178,15 @@
                 / {{ aftershockAnalysis.setup_score_max }}
               </template>
             </span>
+            <span v-if="Number.isFinite(aftershockAnalysis.confidence_score)" class="summary-subvalue">
+              Confidence: {{ aftershockAnalysis.confidence_score }}%
+            </span>
           </div>
         </div>
+
+        <p v-if="aftershockAnalysis.verdict_summary" class="verdict-summary">
+          {{ aftershockAnalysis.verdict_summary }}
+        </p>
 
         <p v-if="aftershockDrawGuidance" class="aftershock-guidance">{{ aftershockDrawGuidance }}</p>
 
@@ -212,6 +219,9 @@
                 <span class="reason-title">{{ getReasonTitle(reason.tag) }}</span>
               </div>
               <p class="reason-detail">{{ reason.detail }}</p>
+              <p v-if="reason.explanation" class="reason-explanation">
+                {{ reason.explanation }}
+              </p>
             </li>
           </ul>
         </div>
@@ -504,8 +514,10 @@ const aftershockAnalysis = computed(() => {
     const message = error instanceof Error ? error.message : 'Unknown analysis error';
     return {
       verdict: 'Error',
+      verdict_summary: '',
       setup_score: 0,
       setup_score_max: 0,
+      confidence_score: 0,
       reasons: [{ tag: 'ANALYSIS_ERROR', detail: message }],
       evidence: {},
     };
@@ -1152,6 +1164,19 @@ button:not(:disabled):hover {
   text-transform: uppercase;
 }
 
+.summary-subvalue {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #3730a3;
+}
+
+.verdict-summary {
+  margin: 1rem 0 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: #312e81;
+}
+
 .aftershock-reasons h3 {
   margin: 0 0 0.5rem;
   font-size: 1.1rem;
@@ -1201,6 +1226,13 @@ button:not(:disabled):hover {
 .reason-detail {
   margin: 0;
   color: #1f2937;
+}
+
+.reason-explanation {
+  margin: 0;
+  color: #475569;
+  font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 select {

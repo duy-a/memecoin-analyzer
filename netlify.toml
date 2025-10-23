@@ -1,3 +1,8 @@
 [build]
   command = "npm run build"
   publish = "dist"
+
+[[redirects]]
+  from = "/raw/:token"
+  to = "/.netlify/functions/raw/:token"
+  status = 200

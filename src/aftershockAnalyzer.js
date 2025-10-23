@@ -176,7 +176,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   const fib = { '0': swingLow, '1': swingHigh, 0: swingLow, 1: swingHigh };
   const swingRange = swingHigh - swingLow;
   fibSet.forEach((level) => {
-    fib[level] = swingLow + swingRange * level;
+    fib[level] = swingHigh - swingRange * level;
   });
 
   const fibLevels = buildFibLevelDetails(fib, fibSet, price);
@@ -349,14 +349,12 @@ function recentReaction(ohlcv, fib) {
     return { ok: false, detail: 'No candles to assess reaction' };
   }
   const last = ohlcv[ohlcv.length - 1];
-  const zoneLow = fib[0.618];
-  const zoneHigh = fib[0.382];
+  const zoneLow = Math.min(fib[0.618], fib[0.382]);
+  const zoneHigh = Math.max(fib[0.618], fib[0.382]);
   if (!Number.isFinite(zoneLow) || !Number.isFinite(zoneHigh)) {
     return { ok: false, detail: 'Fib levels unavailable for reaction check' };
   }
-  const lowerBound = Math.min(zoneLow, zoneHigh);
-  const upperBound = Math.max(zoneLow, zoneHigh);
-  if (last.low > upperBound || last.high < lowerBound) {
+  if (last.low > zoneHigh || last.high < zoneLow) {
     return { ok: false, detail: 'Latest candle is outside the 0.618–0.382 band' };
   }
   const wick = last.close > last.open ? last.low : last.high;

@@ -145,15 +145,15 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs) {
   const fib = { '0': swingLow, '1': swingHigh, 0: swingLow, 1: swingHigh };
   const swingRange = swingHigh - swingLow;
   fibSet.forEach((level) => {
-    fib[level] = swingLow + swingRange * level;
+    fib[level] = swingHigh - swingRange * level;
   });
 
   const fibLevels = buildFibLevelDetails(fib, fibSet, price);
 
   const zoneBands = {
-    'mid-range': [Math.min(fib[0.5], fib[0.382]), Math.max(fib[0.5], fib[0.382])],
-    'upper zone': [Math.min(fib[0.382], fib[0.236]), Math.max(fib[0.382], fib[0.236])],
-    'deep retrace': [Math.min(fib[0.702], fib[0.618]), Math.max(fib[0.702], fib[0.618])],
+    'mid-range': [fib[0.5], fib[0.382]],
+    'upper zone': [fib[0.382], fib[0.236]],
+    'deep retrace': [fib[0.702], fib[0.618]],
   };
 
   let zone = 'none';
@@ -293,7 +293,11 @@ function trend(ohlcv) {
 function EMA(values, length) {
   if (!Array.isArray(values) || values.length === 0) return NaN;
   const k = 2 / (length + 1);
-  return values.reduce((prev, cur, index) => (index === 0 ? cur : cur * k + prev * (1 - k)));
+  let ema = values[0];
+  for (let i = 1; i < values.length; i += 1) {
+    ema = values[i] * k + ema * (1 - k);
+  }
+  return ema;
 }
 
 function recentReaction(ohlcv, fib) {
@@ -301,9 +305,14 @@ function recentReaction(ohlcv, fib) {
     return { ok: false, detail: 'No candles to assess reaction' };
   }
   const last = ohlcv[ohlcv.length - 1];
-  const zoneLow = Math.min(fib[0.618], fib[0.382]);
-  const zoneHigh = Math.max(fib[0.618], fib[0.382]);
-  if (last.low > zoneHigh || last.high < zoneLow) {
+  const zoneLow = fib[0.618];
+  const zoneHigh = fib[0.382];
+  if (!Number.isFinite(zoneLow) || !Number.isFinite(zoneHigh)) {
+    return { ok: false, detail: 'Fib levels unavailable for reaction check' };
+  }
+  const lowerBound = Math.min(zoneLow, zoneHigh);
+  const upperBound = Math.max(zoneLow, zoneHigh);
+  if (last.low > upperBound || last.high < lowerBound) {
     return { ok: false, detail: 'Latest candle is outside the 0.618–0.382 band' };
   }
   const wick = last.close > last.open ? last.low : last.high;

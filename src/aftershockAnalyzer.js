@@ -58,64 +58,90 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
       verdict: 'No Trade',
       setup_score: 0,
       setup_score_max: MAX_SETUP_SCORE,
-      reasons: [{ tag: 'DATA', detail: 'Missing timeframe data' }],
+      reasons: [
+        {
+          tag: 'DATA',
+          detail: 'Missing timeframe data',
+          points: 0,
+          maxPoints: MAX_SETUP_SCORE,
+        },
+      ],
       evidence: evidenceBase,
     };
   }
 
   const reasons = [];
+  const addReason = (tag, detail, points = null, maxPoints = null) => {
+    reasons.push({ tag, detail, points, maxPoints });
+  };
   let score = 0;
 
   if (liquidity < minLiquidity) {
-    reasons.push({
-      tag: 'LIQ_LOW',
-      detail: `Liquidity ${formatUsd(liquidity)} < ${formatUsd(minLiquidity)}`,
-    });
+    addReason(
+      'LIQ_LOW',
+      `Liquidity ${formatUsd(liquidity)} < ${formatUsd(minLiquidity)}`,
+      0,
+      10,
+    );
   } else {
     score += 10;
-    reasons.push({
-      tag: 'LIQ_OK',
-      detail: `Liquidity ${formatUsd(liquidity)} ≥ ${formatUsd(minLiquidity)}`,
-    });
+    addReason(
+      'LIQ_OK',
+      `Liquidity ${formatUsd(liquidity)} ≥ ${formatUsd(minLiquidity)}`,
+      10,
+      10,
+    );
   }
 
   if (volume24h < minVolume) {
-    reasons.push({
-      tag: 'VOL_LOW',
-      detail: `24h Volume ${formatUsd(volume24h)} < ${formatUsd(minVolume)}`,
-    });
+    addReason(
+      'VOL_LOW',
+      `24h Volume ${formatUsd(volume24h)} < ${formatUsd(minVolume)}`,
+      0,
+      10,
+    );
   } else {
     score += 10;
-    reasons.push({
-      tag: 'VOL_OK',
-      detail: `24h Volume ${formatUsd(volume24h)} ≥ ${formatUsd(minVolume)}`,
-    });
+    addReason(
+      'VOL_OK',
+      `24h Volume ${formatUsd(volume24h)} ≥ ${formatUsd(minVolume)}`,
+      10,
+      10,
+    );
   }
 
   if (change24h < minPriceChange) {
-    reasons.push({
-      tag: 'IMPULSE_WEAK',
-      detail: `24h price change ${formatPercent(change24h)} < ${minPriceChange}%`,
-    });
+    addReason(
+      'IMPULSE_WEAK',
+      `24h price change ${formatPercent(change24h)} < ${minPriceChange}%`,
+      0,
+      10,
+    );
   } else {
     score += 10;
-    reasons.push({
-      tag: 'IMPULSE_STRONG',
-      detail: `24h price change ${formatPercent(change24h)} ≥ ${minPriceChange}%`,
-    });
+    addReason(
+      'IMPULSE_STRONG',
+      `24h price change ${formatPercent(change24h)} ≥ ${minPriceChange}%`,
+      10,
+      10,
+    );
   }
 
   if (holders < minHolders) {
-    reasons.push({
-      tag: 'HOLDERS_LOW',
-      detail: `${formatCount(holders)} holders < ${formatCount(minHolders)}`,
-    });
+    addReason(
+      'HOLDERS_LOW',
+      `${formatCount(holders)} holders < ${formatCount(minHolders)}`,
+      0,
+      5,
+    );
   } else {
     score += 5;
-    reasons.push({
-      tag: 'HOLDERS_OK',
-      detail: `${formatCount(holders)} holders ≥ ${formatCount(minHolders)}`,
-    });
+    addReason(
+      'HOLDERS_OK',
+      `${formatCount(holders)} holders ≥ ${formatCount(minHolders)}`,
+      5,
+      5,
+    );
   }
 
   const highs = ohlcv1h.map((candle) => candle.high);
@@ -124,10 +150,10 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   const swingLow = Math.min(...lows);
 
   if (!Number.isFinite(swingHigh) || !Number.isFinite(swingLow) || swingHigh <= swingLow || swingLow <= 0) {
-    reasons.push({
-      tag: 'IMPULSE_RANGE_INVALID',
-      detail: 'Not enough data to anchor Fibonacci swing on the long timeframe',
-    });
+    addReason(
+      'IMPULSE_RANGE_INVALID',
+      'Not enough data to anchor Fibonacci swing on the long timeframe',
+    );
     return {
       verdict: 'No Trade',
       setup_score: score,
@@ -142,10 +168,10 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   }
 
   const gainPct = ((swingHigh - swingLow) / swingLow) * 100;
-  reasons.push({
-    tag: 'IMPULSE_RANGE',
-    detail: `Low ${formatPrice(swingLow)} → High ${formatPrice(swingHigh)} (${formatPercent(gainPct)})`,
-  });
+  addReason(
+    'IMPULSE_RANGE',
+    `Low ${formatPrice(swingLow)} → High ${formatPrice(swingHigh)} (${formatPercent(gainPct)})`,
+  );
 
   const fib = { '0': swingLow, '1': swingHigh, 0: swingLow, 1: swingHigh };
   const swingRange = swingHigh - swingLow;
@@ -171,15 +197,19 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   if (zone !== 'none') {
     score += 15;
     const [lower, upper] = zoneBands[zone];
-    reasons.push({
-      tag: 'ZONE_OK',
-      detail: `Price ${formatPrice(price)} in ${zone} (${formatPrice(lower)}–${formatPrice(upper)})`,
-    });
+    addReason(
+      'ZONE_OK',
+      `Price ${formatPrice(price)} in ${zone} (${formatPrice(lower)}–${formatPrice(upper)})`,
+      15,
+      15,
+    );
   } else {
-    reasons.push({
-      tag: 'ZONE_NONE',
-      detail: `Price ${formatPrice(price)} outside 0.702–0.236 retracement band`,
-    });
+    addReason(
+      'ZONE_NONE',
+      `Price ${formatPrice(price)} outside 0.702–0.236 retracement band`,
+      0,
+      15,
+    );
   }
 
   const trendShort = trend(ohlcv10m);
@@ -189,22 +219,31 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   let mtf = 'low';
   if (upCount === 3) mtf = 'high';
   else if (upCount === 2) mtf = 'medium';
-  if (mtf === 'high') score += 15;
-  else if (mtf === 'medium') score += 8;
-  reasons.push({
-    tag: `MTF_${mtf.toUpperCase()}`,
-    detail: `Trends: 10m=${trendShort}, 30m=${trendMid}, 1h=${trendLong}`,
-  });
+  let mtfPoints = 0;
+  let mtfMaxPoints = 15;
+  if (mtf === 'high') {
+    score += 15;
+    mtfPoints = 15;
+  } else if (mtf === 'medium') {
+    score += 8;
+    mtfPoints = 8;
+  }
+  addReason(
+    `MTF_${mtf.toUpperCase()}`,
+    `Trends: 10m=${trendShort}, 30m=${trendMid}, 1h=${trendLong}`,
+    mtfPoints,
+    mtfMaxPoints,
+  );
 
   const reaction = recentReaction(ohlcv10m, fib);
   if (reaction.ok) {
     score += 10;
-    reasons.push({ tag: 'REACTION_STRONG', detail: reaction.detail });
+    addReason('REACTION_STRONG', reaction.detail, 10, 10);
   } else if (reaction.warn) {
     score += 5;
-    reasons.push({ tag: 'REACTION_WEAK', detail: reaction.detail });
+    addReason('REACTION_WEAK', reaction.detail, 5, 10);
   } else {
-    reasons.push({ tag: 'REACTION_FAIL', detail: reaction.detail });
+    addReason('REACTION_FAIL', reaction.detail, 0, 10);
   }
 
   let verdict = 'Avoid / Not Valid';

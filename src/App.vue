@@ -195,11 +195,23 @@
         </div>
 
         <div v-if="aftershockAnalysis.reasons?.length" class="aftershock-reasons">
-          <h3>Key factors</h3>
+          <h3>Setup score breakdown</h3>
           <ul>
-            <li v-for="reason in aftershockAnalysis.reasons" :key="`${reason.tag}-${reason.detail}`">
-              <span class="reason-tag">{{ reason.tag }}</span>
-              <span class="reason-detail">{{ reason.detail }}</span>
+            <li
+              v-for="reason in aftershockAnalysis.reasons"
+              :key="`${reason.tag}-${reason.detail}`"
+              class="reason-item"
+            >
+              <div class="reason-header">
+                <span
+                  v-if="getReasonScoreLabel(reason)"
+                  class="reason-score"
+                >
+                  {{ getReasonScoreLabel(reason) }}
+                </span>
+                <span class="reason-title">{{ getReasonTitle(reason.tag) }}</span>
+              </div>
+              <p class="reason-detail">{{ reason.detail }}</p>
             </li>
           </ul>
         </div>
@@ -499,6 +511,50 @@ const aftershockAnalysis = computed(() => {
     };
   }
 });
+
+const reasonTitleMap = {
+  DATA: 'Data availability',
+  LIQ_LOW: 'Liquidity readiness',
+  LIQ_OK: 'Liquidity readiness',
+  VOL_LOW: 'Volume strength',
+  VOL_OK: 'Volume strength',
+  IMPULSE_WEAK: '24h price impulse',
+  IMPULSE_STRONG: '24h price impulse',
+  HOLDERS_LOW: 'Holder base',
+  HOLDERS_OK: 'Holder base',
+  IMPULSE_RANGE_INVALID: 'Swing range context',
+  IMPULSE_RANGE: 'Swing range context',
+  ZONE_OK: 'Fib retracement zone',
+  ZONE_NONE: 'Fib retracement zone',
+  MTF_HIGH: 'Multi-timeframe trend alignment',
+  MTF_MEDIUM: 'Multi-timeframe trend alignment',
+  MTF_LOW: 'Multi-timeframe trend alignment',
+  REACTION_STRONG: 'Fib reaction quality',
+  REACTION_WEAK: 'Fib reaction quality',
+  REACTION_FAIL: 'Fib reaction quality',
+  ANALYSIS_ERROR: 'Analysis error',
+};
+
+function getReasonTitle(tag) {
+  return reasonTitleMap[tag] ?? 'Assessment note';
+}
+
+function getReasonScoreLabel(reason) {
+  if (!reason || typeof reason.points !== 'number') {
+    return '';
+  }
+
+  const earned = reason.points;
+  const max = typeof reason.maxPoints === 'number' ? reason.maxPoints : null;
+  const sign = earned > 0 ? '+' : earned < 0 ? '-' : '';
+  const absolute = Math.abs(earned);
+
+  if (max !== null && Number.isFinite(max)) {
+    return `${sign}${absolute} / ${max} pts`;
+  }
+
+  return `${sign}${absolute} pts`;
+}
 
 const aftershockFibLevels = computed(() => {
   const levels = aftershockAnalysis.value?.evidence?.fibLevels;
@@ -1110,28 +1166,40 @@ button:not(:disabled):hover {
   gap: 0.75rem;
 }
 
-.aftershock-reasons li {
-  display: flex;
-  flex-wrap: wrap;
+.reason-item {
+  display: grid;
   gap: 0.5rem;
-  align-items: baseline;
-  padding: 0.75rem 1rem;
-  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.85rem;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
 }
 
-.reason-tag {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+.reason-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.reason-score {
   font-size: 0.8rem;
-  font-weight: 600;
-  color: #4338ca;
-  background: rgba(67, 56, 202, 0.1);
-  padding: 0.25rem 0.5rem;
+  font-weight: 700;
+  color: #312e81;
+  background: rgba(99, 102, 241, 0.12);
+  padding: 0.25rem 0.6rem;
   border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.reason-title {
+  font-weight: 600;
+  color: #0f172a;
 }
 
 .reason-detail {
+  margin: 0;
   color: #1f2937;
 }
 

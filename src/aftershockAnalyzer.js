@@ -150,8 +150,10 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
     );
   }
 
-  const highs = ohlcv1h.map((candle) => candle.high);
-  const lows = ohlcv1h.map((candle) => candle.low);
+  const lookback = Math.min(ohlcv1h.length, 200);
+  const longTail = ohlcv1h.slice(-lookback);
+  const highs = longTail.map((candle) => candle.high);
+  const lows = longTail.map((candle) => candle.low);
   const swingHigh = Math.max(...highs);
   const swingLow = Math.min(...lows);
 
@@ -188,7 +190,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   const fib = { '0': swingLow, '1': swingHigh, 0: swingLow, 1: swingHigh };
   const swingRange = swingHigh - swingLow;
   fibSet.forEach((level) => {
-    fib[level] = swingHigh - swingRange * level;
+    fib[level] = swingLow + swingRange * level;
   });
 
   const fibLevels = buildFibLevelDetails(fib, fibSet, price);

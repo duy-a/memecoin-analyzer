@@ -176,7 +176,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   const fib = { '0': swingLow, '1': swingHigh, 0: swingLow, 1: swingHigh };
   const swingRange = swingHigh - swingLow;
   fibSet.forEach((level) => {
-    fib[level] = swingHigh - swingRange * level;
+    fib[level] = swingLow + swingRange * level;
   });
 
   const fibLevels = buildFibLevelDetails(fib, fibSet, price);

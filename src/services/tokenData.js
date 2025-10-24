@@ -1,4 +1,4 @@
-const DEFAULT_TIMEFRAME_SELECTIONS = ['1min', '5min', '1h'];
+const DEFAULT_TIMEFRAME_SELECTIONS = ['1min', '10min', '30min'];
 
 export function getDefaultDateRange() {
   const end = new Date();

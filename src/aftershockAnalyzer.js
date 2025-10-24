@@ -30,8 +30,8 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   const liquidity = Number.isFinite(liquidityRaw) ? liquidityRaw : 0;
 
   const ohlcv1m = extractResult(configs[0]);
-  const ohlcv5m = extractResult(configs[1]);
-  const ohlcv1h = extractResult(configs[2]);
+  const ohlcv10m = extractResult(configs[1]);
+  const ohlcv30m = extractResult(configs[2]);
 
   const timeframeMeta = buildTimeframeMeta(configs, [
     { key: 'short', fallbackLabel: 'Shortest timeframe' },
@@ -48,12 +48,12 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
     thresholds: resolvedThresholds,
     ohlcv: {
       short: { ...timeframeMeta.short, candles: ohlcv1m },
-      medium: { ...timeframeMeta.medium, candles: ohlcv5m },
-      long: { ...timeframeMeta.long, candles: ohlcv1h },
+      medium: { ...timeframeMeta.medium, candles: ohlcv10m },
+      long: { ...timeframeMeta.long, candles: ohlcv30m },
     },
   };
 
-  if (!ohlcv1m.length || !ohlcv5m.length || !ohlcv1h.length) {
+  if (!ohlcv1m.length || !ohlcv10m.length || !ohlcv30m.length) {
     const missingDataReasons = [
       {
         tag: 'DATA',
@@ -150,8 +150,8 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
     );
   }
 
-  const lookback = Math.min(ohlcv1h.length, 200);
-  const longTail = ohlcv1h.slice(-lookback);
+  const lookback = Math.min(ohlcv30m.length, 200);
+  const longTail = ohlcv30m.slice(-lookback);
   const highs = longTail.map((candle) => candle.high);
   const lows = longTail.map((candle) => candle.low);
   const swingHigh = Math.max(...highs);
@@ -227,8 +227,8 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   }
 
   const trendShort = trend(ohlcv1m);
-  const trendMid = trend(ohlcv5m);
-  const trendLong = trend(ohlcv1h);
+  const trendMid = trend(ohlcv10m);
+  const trendLong = trend(ohlcv30m);
   const upCount = [trendShort, trendMid, trendLong].filter((value) => value === 'up').length;
   let mtf = 'low';
   if (upCount === 3) mtf = 'high';
@@ -244,7 +244,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
   }
   addReason(
     `MTF_${mtf.toUpperCase()}`,
-    `Trends: 1m=${trendShort}, 5m=${trendMid}, 1h=${trendLong}`,
+    `Trends: 1m=${trendShort}, 10m=${trendMid}, 30m=${trendLong}`,
     mtfPoints,
     mtfMaxPoints,
   );
@@ -266,7 +266,7 @@ export function analyzeTokenAftershock(tokenOverview, timeframeConfigs, threshol
 
   const impulseSource = {
     ...(timeframeMeta.long ?? {}),
-    candles: ohlcv1h.length,
+    candles: ohlcv30m.length,
   };
 
   // 1. Explain each scoring reason in human language

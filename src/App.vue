@@ -84,7 +84,7 @@ async function handleSubmit() {
 }
 
 const formattedJson = computed(() =>
-  combinedResponse.value ? JSON.stringify(combinedResponse.value, null, 2) : '',
+  combinedResponse.value ? JSON.stringify(combinedResponse.value) : '',
 );
 
 function copyUsingTextarea(text) {

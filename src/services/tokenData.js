@@ -1,4 +1,11 @@
-const DEFAULT_TIMEFRAME_SELECTIONS = ['1min', '10min', '30min'];
+const DEFAULT_TIMEFRAME_SELECTIONS = ['1min', '10min', '30min', '1s'];
+
+// Shorter timeframes can quickly produce very large responses, so we constrain their
+// lookback windows where necessary. This keeps the Moralis OHLCV request sizes
+// predictable without affecting the default, longer-range selections.
+const TIMEFRAME_LOOKBACK_LIMITS = {
+  '1s': { minutes: 15 },
+};
 
 export function getDefaultDateRange() {
   const end = new Date();
@@ -33,6 +40,35 @@ async function fetchTokenHolders(address, apiKey) {
       'X-API-Key': apiKey,
     },
   });
+}
+
+function resolveTimeframeRange(timeframe, baseRange) {
+  const override = TIMEFRAME_LOOKBACK_LIMITS[timeframe];
+  if (!override) {
+    return baseRange;
+  }
+
+  const toDate = new Date(baseRange?.toDateIso ?? new Date().toISOString());
+  if (Number.isNaN(toDate.getTime())) {
+    return baseRange;
+  }
+
+  const fromDate = new Date(toDate);
+
+  if (typeof override.minutes === 'number' && Number.isFinite(override.minutes)) {
+    fromDate.setMinutes(fromDate.getMinutes() - override.minutes);
+  } else if (typeof override.hours === 'number' && Number.isFinite(override.hours)) {
+    fromDate.setHours(fromDate.getHours() - override.hours);
+  } else if (typeof override.days === 'number' && Number.isFinite(override.days)) {
+    fromDate.setDate(fromDate.getDate() - override.days);
+  } else {
+    return baseRange;
+  }
+
+  return {
+    fromDateIso: fromDate.toISOString(),
+    toDateIso: toDate.toISOString(),
+  };
 }
 
 async function fetchOhlcv(pairAddress, timeframe, range, apiKey) {
@@ -91,7 +127,10 @@ export async function fetchAggregatedTokenData(
     Promise.all(
       timeframeSelections.map((timeframe) =>
         Promise.resolve()
-          .then(() => fetchOhlcv(pairAddress, timeframe, resolvedRange, apiKey))
+          .then(() => {
+            const timeframeRange = resolveTimeframeRange(timeframe, resolvedRange);
+            return fetchOhlcv(pairAddress, timeframe, timeframeRange, apiKey);
+          })
           .then((data) => ({ timeframe, status: 'fulfilled', value: data }))
           .catch((error) => ({ timeframe, status: 'rejected', reason: error })),
       ),
